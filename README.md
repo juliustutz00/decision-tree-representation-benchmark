@@ -116,3 +116,7 @@ The label distance is defined in `substitution_cost` inside [`compute_structural
 * [`metadata.jsonl`](results/subforest_results/metadata.jsonl): lists all parameters used for the experiment
 * [`subforest.csv`](results/subforest_results/subforest.csv): lists different metrics of representation-derived subforests; done for multiple combinations of subforest sizes and selection methods; takes full random forest, randomly chosen trees, and trees with top OOB-accuracy as baselines
 
+## Limitations
+
+* Only works for classification tasks; regression tasks are not supported
+* Only works with numerical features; categorical/binary features are not supported
