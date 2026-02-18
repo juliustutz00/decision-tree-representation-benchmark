@@ -1,0 +1,45 @@
+defaults:
+  seed: 42
+  print_progress: true
+  save_results: true
+  representation_benchmark: true
+  subforest_selection: true
+
+  dataset: iris                           # UCI: "iris", "breast_cancer", "wine", "MAGIC_gamma", "kidney", "AI4I", "adult", "poker_hand", "connect_4", "letter_recognition", "nursery"
+                                          # TCGA: "aml", "bic", "coad", "gbm", "kirc", "lihc", "lusc", "skcm", "ov", "sarc"
+  n_splits: 3                             # [1, +inf)
+  n_samples: 10000                        # [1, +inf)
+  representations:                        # "true", "false"
+    Feature Graph: true
+    Tree Descriptor: true
+    Leaf Profile: true
+  run_topological_forest: true            # "true", "false"
+  run_indtree: true                       # "true", "false"
+  perturbations:                          # "true", "false"
+    change_threshold: true
+    change_feature: true
+    swap_nodes: true
+    remove_nodes: true
+    add_nodes: true
+
+  intensities: [0.2, 0.4, 0.6, 0.8, 1]    # [0, 1]
+  perturbation_runs: 1                    # [1, +inf)
+  random_forest_size: 300                 # [1, +inf)
+  subforest_size: [5, 10, 15, 20]         # [1, random_forest_size)
+  clustering: k-medoid                    # ["k-medoid", "agglomerative", "density"]
+
+runs:
+  - representation_benchmark: true
+    subforest_selection: true
+    dataset: iris
+    representations: 
+      Feature Graph: true
+      Tree Descriptor: true
+      Leaf Profile: true
+    run_topological_forest: true
+    run_indtree: true
+    random_forest_size: 20
+    subforest_size: [5, 10, 15]
+    clustering: ["k-medoid", "agglomerative", "density"]
+    save_results: true
+    perturbation_runs: 1
