@@ -1,0 +1,21 @@
+# depencies between the packages are tricky, please stick to the given versions
+# the code was tested to work on Python 3.11.0 and Python 3.12.9
+flax==0.12.1
+jax==0.8.1
+kmapper==2.1.0
+learn2learn==0.2.1
+matplotlib==3.8.4
+networkx==3.3
+numpy==1.26.4
+openTSNE==1.0.4
+pandas==2.2.3
+POT==0.9.6
+pytorch-lightning==2.5.1
+PyYAML==6.0.3
+scikit-learn==1.7.2
+scikit-learn-extra==0.3.0
+scipy==1.16.2
+seaborn==0.13.2
+torch==2.2.2
+wandb==0.23.0
+zss==1.2.0
