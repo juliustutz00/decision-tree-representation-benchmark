@@ -1,0 +1,4 @@
+1. Clone the repository
+2. Install requirements
+3. Navigate to repository root
+4. run python examples/run_example.py
