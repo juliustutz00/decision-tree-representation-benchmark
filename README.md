@@ -4,8 +4,8 @@ Comparing decision trees is inherently non-trivial due to their structure. While
 
 Representations of said decision trees enable a structural and functional comparison by abstracting some information and thereby gaining the ability to quantify similarity.
 
-This benchmark therefore explores the usefulness of different decision tree representations by 
-(i) assessing the representations in an isolated setting by using controlled perturbations and measuring correlations between representation distances, performance differences, and structural distances, and
+This benchmark therefore explores the usefulness of different decision tree representations by  
+(i) assessing the representations in an isolated setting by using controlled perturbations and measuring correlations between representation distances, performance differences, and structural distances, and  
 (ii) measuring the representation’s effectiveness on downstream tasks by using their distances for a diverse subforest selection which is then compared against subforests chosen at random or solely based on out-of-bag (OOB) accuracy.
 
 ## Quickstart
