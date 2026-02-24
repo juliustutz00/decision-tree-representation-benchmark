@@ -133,7 +133,7 @@ def main(config_path: str = str(Path(__file__).with_name("benchmark_runs.yaml"))
 
         dataset_name = cfg["dataset"]
         loader = DATASETS[dataset_name]
-        (folds, features_info), resolved_name = loader(n_splits=cfg.get("n_splits", 3), n_samples=cfg.get("n_samples", 10000), seed=cfg.get("seed", 0))
+        (folds, features_info), resolved_name = loader(seed=cfg.get("seed", 0))
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"_run{run_idx}_{dataset_name}"
 
         pooled_perturbations = []
