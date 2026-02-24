@@ -25,17 +25,9 @@ def get_iris_dataset(n_splits=3, n_samples=10000, seed=0):
 def get_breast_cancer_dataset(n_splits=3, n_samples=10000, seed=0):
     return __load_ucirepo_dataset(uci_name="breast_cancer", n_splits=n_splits, n_samples=n_samples, seed=seed), "breast_cancer_UCI"
 
-# https://archive.ics.uci.edu/dataset/186/wine+quality
-def get_wine_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="wine", n_splits=n_splits, n_samples=n_samples, seed=seed), "wine_UCI"
-
 # https://archive.ics.uci.edu/dataset/159/magic+gamma+telescope
 def get_MAGIC_gamma_dataset(n_splits=3, n_samples=10000, seed=0):
     return __load_ucirepo_dataset(uci_name="magic_gamma", n_splits=n_splits, n_samples=n_samples, seed=seed), "MAGIC_gamma_UCI"
-
-# https://archive.ics.uci.edu/dataset/336/chronic+kidney+disease
-def get_kidney_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="kidney", n_splits=n_splits, n_samples=n_samples, seed=seed), "kidney_UCI"
 
 # https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset
 def get_AI4I_dataset(n_splits=3, n_samples=10000, seed=0):
@@ -56,10 +48,7 @@ def get_bank_marketing_dataset(n_splits=3, n_samples=10000, seed=0):
 # https://archive.ics.uci.edu/dataset/267/banknote+authentication
 def get_banknote_authentication_dataset(n_splits=3, n_samples=10000, seed=0):
     return __load_ucirepo_dataset(uci_name="banknote_authentication", n_splits=n_splits, n_samples=n_samples, seed=seed), "banknote_authentication_UCI"
-
-# https://archive.ics.uci.edu/dataset/19/car+evaluation
-def get_car_evaluation_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="car_evaluation", n_splits=n_splits, n_samples=n_samples, seed=seed), "car_evaluation_UCI"
+    
 
 def get_aml_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
     return __get_preprocessed_TCGA_dataset("aml", n_splits=n_splits, n_features=n_features, seed=seed), "aml_TCGA"
