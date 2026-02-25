@@ -26,7 +26,7 @@ cd src
 python benchmark_runner.py
 ```
 
-The default run configuration is in [`src/benchmark_runs.yaml`](src/benchmark_runs.yaml) and is loaded by [`main`](src/benchmark_runner.py) in [`src/benchmark_runner.py`](src/benchmark_runner.py).
+The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](src/benchmark_runner.py) in [`src/benchmark_runner.py`](src/benchmark_runner.py).
 
 ## Data expectations
 
@@ -54,7 +54,7 @@ datasets/
 Notes: 
 * Categorical/binary features are **dropped** as sklearn DecisionTreeClassifier cannot use them (only continuous/integer-like types are kept).
 * Splits are created via stratified cross-validation.
-* If you include `datasets/` in the repo, the code can run “as-is”.
+* If you pull `datasets/` as shown in the quickstart, the code can run “as-is”.
 
  ## Representations
 
