@@ -26,11 +26,11 @@ cd src
 python benchmark_runner.py
 ```
 
-The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](src/benchmark_runner.py) in [`src/benchmark_runner.py`](src/benchmark_runner.py).
+The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](tree_representation_benchmark/src/benchmark_runner.py) in [`src/benchmark_runner.py`](tree_representation_benchmark/src/benchmark_runner.py).
 
 ## Data expectations
 
-The loaders in [`src/data_utils.py`](src/data_utils.py) (e.g. [`__load_ucirepo_dataset`](src/data_utils.py), [`__get_preprocessed_TCGA_dataset`](src/data_utils.py)) expect downloaded datasets.
+The loaders in [`src/data_utils.py`](tree_representation_benchmark/src/data_utils.py) (e.g. [`__load_ucirepo_dataset`](tree_representation_benchmark/src/data_utils.py), [`__get_preprocessed_TCGA_dataset`](tree_representation_benchmark/src/data_utils.py)) expect downloaded datasets.
 
 Expected folder layout (per UCI dataset):
 ```
@@ -84,7 +84,7 @@ Perturbations are controlled modifications applied directly to sklearn DecisionT
 ## Structural difference (tree edit distance)
 
 Structural difference is computed via Zhang–Shasha tree edit distance using `zss` in
-[`src/structural_difference.py`](src/structural_difference.py) ([`compute_structural_difference`](src/structural_difference.py)).
+[`src/structural_difference.py`](tree_representation_benchmark/src/structural_difference.py) ([`compute_structural_difference`](tree_representation_benchmark/src/structural_difference.py)).
 
 ### Node labels
 Each sklearn node is mapped to a `zss.Node` label:
@@ -92,7 +92,7 @@ Each sklearn node is mapped to a `zss.Node` label:
 * Internal: `"f<feature_idx>:<threshold>"` (threshold formatted to 3 decimals)
 
 ### Implemented costs
-The label distance is defined in `substitution_cost` inside [`compute_structural_difference`](src/structural_difference.py):
+The label distance is defined in `substitution_cost` inside [`compute_structural_difference`](tree_representation_benchmark/src/structural_difference.py):
 
 * **Insertion / deletion**: if either label is empty (`''`), cost = `1`
 * **Exact match**: cost = `0`
@@ -119,4 +119,4 @@ The label distance is defined in `substitution_cost` inside [`compute_structural
 ## Limitations
 
 * Only works for classification tasks; regression tasks are not supported
-* Only works with numerical features; categorical/binary features are not supported
+* Only works with numerical features; categorical/binary features are not supported (except for the perturbations, they support categorical data)
