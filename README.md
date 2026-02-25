@@ -28,6 +28,16 @@ python benchmark_runner.py
 
 The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](tree_representation_benchmark/src/benchmark_runner.py) in [`src/benchmark_runner.py`](tree_representation_benchmark/src/benchmark_runner.py).
 
+### Note
+There are multiple parameters that heavily influence runtime; adjust those accordingly to your needs
+- [`src/benchmark_utils.py`](tree_representation_benchmark/src/benchmark_utils.py) (line 26): max_depth=10 (higher depths can easily lead to very long runtimes and huge memory requirements (because INDTree's performance and memory usage scales with the max_depth of any tree it tries to learn))
+- [`src/representations/indtree_representation.py`](tree_representation_benchmark/src/representations/indtree_representation.py) (line 115): batch_size=1024 (adjust based on your hardware)
+- [`src/representations/indtree_representation.py`](tree_representation_benchmark/src/representations/indtree_representation.py) (line 119): max_epochs=10 (the authors suggest 2000; for this task, 10 might be enough)
+- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (lines 5-6): representation_benchmark:true AND subforest_selection:true (only choose what you need)
+- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (line 10): n_splits:3 (number of cross-validation folds multiplies time needed)
+- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (line 27): random_forest_size:300 (increasing number of decision trees in random forest drastically increases runtime and memory requirements)
+- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (lines 25-26): intensities:[0.2,0.4,0.6,0.8,1] AND perturbation_runs:1 (perturbation experiment has to deal with random_forest_size \* |intensities| \* |perturbations| \* |perturbation_runs| trees)
+
 ## Data expectations
 
 The loaders in [`src/data_utils.py`](tree_representation_benchmark/src/data_utils.py) (e.g. [`__load_ucirepo_dataset`](tree_representation_benchmark/src/data_utils.py), [`__get_preprocessed_TCGA_dataset`](tree_representation_benchmark/src/data_utils.py)) expect downloaded datasets.
