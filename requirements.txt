@@ -18,6 +18,7 @@ zss
 numpy<2
 
 # The following package versions are ensured to work when using Python 3.10 or Python 3.12 on Kali Linux (Python 3.11 does NOT work)
+# on a VM, openTSNE might not work; if so (e.g., it shows a zsh error), do python -m pip uninstall openTSNE -y && pip install --no-binary :all: openTSNE
 #kmapper==1.2.0
 #learn2learn==0.2.0
 #matplotlib==3.8.4
