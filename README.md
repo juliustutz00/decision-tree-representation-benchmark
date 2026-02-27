@@ -10,13 +10,19 @@ This benchmark therefore explores the usefulness of different decision tree repr
 
 ## Quickstart
 ```sh
-# from the repository root
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-# source .venv/bin/activate
+sudo apt install git-lfs
+git clone https://github.com/juliustutz00/decision-tree-representation-benchmark.git
+cd decision-tree-representation-benchmark
 
+# THE FOLLOWING 5 STEPS ARE RECOMMENDED BUT NOT NECESSARY
+curl https://pyenv.run | bash
+pyenv install 3.10.19 # or 3.12.9
+python -m venv .venv
+source .venv/bin/activate
+pyenv local 3.10.19 # or 3.12.9
+
+git lfs install
+git lfs pull
 python -m pip install -U pip
 python -m pip install -r requirements.txt
 
@@ -27,6 +33,7 @@ python benchmark_runner.py
 ```
 
 The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](tree_representation_benchmark/src/benchmark_runner.py) in [`src/benchmark_runner.py`](tree_representation_benchmark/src/benchmark_runner.py).
+If you run the code on Windows, you'll need to add "results_root: ..\results" to the default of [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml).
 
 ### Note
 There are multiple parameters that heavily influence runtime; adjust those accordingly to your needs
