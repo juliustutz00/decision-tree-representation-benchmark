@@ -118,16 +118,16 @@ The label distance is defined in `substitution_cost` inside [`compute_structural
 ## Outputs
 
 ### Representation Benchmark
-* [`metadata.jsonl`](results/perturbation_results/metadata.jsonl): lists all parameters used for the experiment
-* [`performance_ted_correlations.csv`](results/perturbation_results/performance_ted_correlations.csv): lists correlations of representation similarity, accuracy, and tree edit distance for all representations
-* [`perturbations.csv`](results/perturbation_results/perturbations.csv): lists representation similarity, performance, and tree edit distance for all perturbed trees in comparison to the original unperturbed tree
-* [`representation_correlations.csv`](results/perturbation_results/representation_correlations.csv): lists the correlations between the representation similarities of the perturbed trees across all representations (e.g. how similar any two representations behave when calculating decision tree distances)
-* [`{representation}_similarity_performance.png`](results/plots/{representation}_similarity_performance.png): plots the correlation between representation similarity and accuracy for each respective representation for all perturbed trees (visual representation of performance_ted_correlations.csv)
-* [`{representation}_similarity_structural_distance.png`](results/plots/{representation}_similarity_structural_distance.png): plots the correlation between representation similarity and tree edit distance for each respective representation for all perturbed trees (visual representation of performance_ted_correlations.csv)
+* [`metadata.jsonl`](exemplary_results/perturbation_results/20260219T074948Z_run1_iris_metadata.jsonl): lists all parameters used for the experiment
+* [`performance_ted_correlations.csv`](exemplary_results/perturbation_results/20260219T074948Z_run1_iris_performance_ted_correlations.csv): lists correlations of representation similarity, accuracy, and tree edit distance for all representations
+* [`perturbations.csv`](exemplary_results/perturbation_results/20260219T074948Z_run1_iris_perturbations.csv): lists representation similarity, performance, and tree edit distance for all perturbed trees in comparison to the original unperturbed tree
+* [`representation_correlations.csv`](exemplary_results/perturbation_results/20260219T074948Z_run1_iris_representation_correlations.csv): lists the correlations between the representation similarities of the perturbed trees across all representations (e.g. how similar any two representations behave when calculating decision tree distances)
+* [`{representation}_similarity_performance.png`](exemplary_results/plots/20260219T074948Z_run1_iris_Leaf_Profile_similarity_performance_ALLFOLDS.png): plots the correlation between representation similarity and accuracy for each respective representation for all perturbed trees (visual representation of performance_ted_correlations.csv)
+* [`{representation}_similarity_structural_distance.png`](exemplary_results/plots/20260219T074948Z_run1_iris_Leaf_Profile_similarity_structural_difference_ALLFOLDS.png): plots the correlation between representation similarity and tree edit distance for each respective representation for all perturbed trees (visual representation of performance_ted_correlations.csv)
 
 ### Subforest Selection
-* [`metadata.jsonl`](results/subforest_results/metadata.jsonl): lists all parameters used for the experiment
-* [`subforest.csv`](results/subforest_results/subforest.csv): lists different metrics of representation-derived subforests; done for multiple combinations of subforest sizes and selection methods; takes full random forest, randomly chosen trees, and trees with top OOB-accuracy as baselines
+* [`metadata.jsonl`](results/subforest_results/20260208T233125Z_run1_iris_metadata.jsonl): lists all parameters used for the experiment
+* [`subforest.csv`](results/subforest_results/20260208T233125Z_run1_iris_subforest.csv): lists different metrics of representation-derived subforests; done for multiple combinations of subforest sizes and selection methods; takes full random forest, randomly chosen trees, and trees with top OOB-accuracy as baselines
 
 ## Limitations
 
