@@ -25,11 +25,7 @@ git lfs install
 git lfs pull
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-
-# IMPORTANT: many paths in this repo are relative to the *current working directory*.
-# The most reliable way is to run from ./src:
-cd src
-python benchmark_runner.py
+python -m src.benchmark_runner
 ```
 
 The default run configuration is in [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) and is loaded by [`main`](tree_representation_benchmark/src/benchmark_runner.py) in [`src/benchmark_runner.py`](tree_representation_benchmark/src/benchmark_runner.py).
