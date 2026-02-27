@@ -126,8 +126,8 @@ The label distance is defined in `substitution_cost` inside [`compute_structural
 * [`{representation}_similarity_structural_distance.png`](exemplary_results/plots/20260219T074948Z_run1_iris_Leaf_Profile_similarity_structural_difference_ALLFOLDS.png): plots the correlation between representation similarity and tree edit distance for each respective representation for all perturbed trees (visual representation of performance_ted_correlations.csv)
 
 ### Subforest Selection
-* [`metadata.jsonl`](results/subforest_results/20260208T233125Z_run1_iris_metadata.jsonl): lists all parameters used for the experiment
-* [`subforest.csv`](results/subforest_results/20260208T233125Z_run1_iris_subforest.csv): lists different metrics of representation-derived subforests; done for multiple combinations of subforest sizes and selection methods; takes full random forest, randomly chosen trees, and trees with top OOB-accuracy as baselines
+* [`metadata.jsonl`](exemplary_results/subforest_results/20260208T233125Z_run1_iris_metadata.jsonl): lists all parameters used for the experiment
+* [`subforest.csv`](exemplary_results/subforest_results/20260208T233125Z_run1_iris_subforest.csv): lists different metrics of representation-derived subforests; done for multiple combinations of subforest sizes and selection methods; takes full random forest, randomly chosen trees, and trees with top OOB-accuracy as baselines
 
 ## Limitations
 
