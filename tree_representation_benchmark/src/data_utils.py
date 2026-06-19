@@ -12,11 +12,7 @@ DATA_ROOT = Path(os.environ["SUBFOREST_WORKDIR"]).resolve() / "datasets"
 if not DATA_ROOT.exists():
     raise RuntimeError(f"DATA_ROOT does not exist: {DATA_ROOT}")
 
-# datasets searched by myself, from 
-# Bayir, Murat Ali, et al. "Topological forest." IEEE Access 10 (2022): 131711-131721.
-# and 
-# Guidotti, Riccardo, et al. "Generative model for decision trees." Proceedings of the AAAI Conference on Artificial Intelligence. Vol. 38. No. 19. 2024.
-
+# filtered by myself
 # UCI
 # https://archive.ics.uci.edu/dataset/53/iris
 def get_iris_dataset(n_splits=3, n_samples=10000, seed=0):
