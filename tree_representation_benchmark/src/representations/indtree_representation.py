@@ -4,7 +4,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping
 import learn2learn as l2l
+import os
 from .indtree_representation_utils.gentree_utils import load_data
 from .indtree_representation_utils.tree_dataset_generation import trees_to_direct_encodings
 from .indtree_representation_utils.metamodel import MetaModel, TreeDataModule
@@ -15,27 +17,27 @@ from .indtree_representation_utils.direct_encoding_utils import direct_embedding
 
 from .base import BaseRepresentation
 
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("medium")
+
 class INDTreeRepresentation(BaseRepresentation):
-    """
-    Neural-network-based representation of decision trees using a common coordinate grid.
-    
-    Source: https://github.com/fismimosa/indtree/
-    """
     def __init__(self, all_trees, X, y, encoding="direct", comparing="output", seed=0):
-        """Substitutes representation function with training of a meta-model that learns to embed all collected trees into a common coordinate space."""
         # all_trees has to be a list of DecisionTreeClassifier
         self.comparing = comparing
         max_depth = np.max([tree.get_depth() for tree in all_trees]) 
         X_train, X_val_test, y_train, y_val_test = train_test_split(X, y, test_size=0.3, random_state=seed)
         X_val, X_test, y_val, y_test = train_test_split(X_val_test, y_val_test, test_size=0.5, random_state=seed)
-        n_features_in_train = X_train.shape[1]
-        n_classes_train = len(np.unique(y_train))
-        n_features_in_val = X_val.shape[1]
-        n_classes_val = len(np.unique(y_val))
+        n_features_in_train = X.shape[1]#X_train.shape[1]
+        n_classes_train = len(np.unique(y))#len(np.unique(y_train))
+        n_features_in_val = X.shape[1]#X_val.shape[1]
+        n_classes_val = len(np.unique(y))#len(np.unique(y_val))
+        n_features_in_test = X.shape[1]#X_test.shape[1]
+        n_classes_test = len(np.unique(y))#len(np.unique(y_test))
         rf_val = RandomForestClassifier(max_depth=max_depth)
         rf_val.fit(X_val, y_val)
-        n_features_in_test = X_test.shape[1]
-        n_classes_test = len(np.unique(y_test))
+
         if encoding == "direct":
             (feats_embeddings_train, classes_embeddings_train, threshold_embeddings_train) = trees_to_direct_encodings(all_trees, max_depth, n_features_in_train, n_classes_train)
             (feats_embeddings_val, classes_embeddings_val, threshold_embeddings_val) = trees_to_direct_encodings(all_trees, max_depth, n_features_in_val, n_classes_val)
@@ -90,7 +92,7 @@ class INDTreeRepresentation(BaseRepresentation):
             metamodel=metamodel,
             metamodel_params=dict(
                 lr=1e-3,
-                first_order=False,
+                first_order=True,
             ),
             optimizer_params=dict(
                 lr=1e-5,
@@ -111,29 +113,143 @@ class INDTreeRepresentation(BaseRepresentation):
             weight_feat=1,
             weight_thresh=1,
             weight_class=1,
-            rf_log_freq=1,
+            rf_log_freq=50,
         )
+
+        slurm_cpus = os.getenv("SLURM_CPUS_PER_TASK")
+        if slurm_cpus:
+            workers = max(1, int(slurm_cpus) - 2)
+        else:
+            workers = 4
 
         data_module = TreeDataModule(
             meta_dataloader_train,
             meta_dataloader_val,
             meta_dataloader_test,
-            batch_size=1024,
+            batch_size=128,
+            num_workers=workers,
+            pin_memory=True
+        )
+
+        early_stop_callback = EarlyStopping(
+            monitor="train_loss", 
+            min_delta=0.025, 
+            patience=2, 
+            verbose=False, 
+            mode="min"
         )
 
         trainer = pl.Trainer(
-            max_epochs=10, # the authors suggest 2000 in their paper
-            accelerator="auto",
-            devices=1
+            max_epochs=1,#2000,
+            accelerator="auto", # can be "gpu" or "cpu"
+            devices=1, # remove if accelerator="cpu"
+            callbacks=[early_stop_callback]
         )
         trainer.fit(self.lightning_model, datamodule=data_module)
         self.list_train_loader = list(meta_dataloader_train)
+
+        self.feature_cache = {}
+        self.model_repr_cache = {}
+        if self.comparing == "output":
+            self._precompute_outputs()
+        elif self.comparing == "model":
+            self._precompute_model_reprs()
+
+    def _precompute_outputs(self):
+        device = self.lightning_model.device
+        self.lightning_model.eval()
+        
+        self.cached_outputs = []
+        
+        for item in self.list_train_loader:
+            coords = item.coords.clone().detach().to(device).unsqueeze(0)
+            onehot_feat = item.onehot_feat.clone().detach().to(device).unsqueeze(0)
+            onehot_thresh = item.onehot_thresh.clone().detach().to(device).unsqueeze(0)
+            onehot_class = item.onehot_class.clone().detach().to(device).unsqueeze(0)
+
+            feat_out, thresh_out, class_out = self.lightning_model(
+                coords, onehot_feat, onehot_thresh, onehot_class
+            )
+                
+            self.cached_outputs.append((
+                feat_out.detach().cpu(), 
+                thresh_out.detach().cpu(), 
+                class_out.detach().cpu()
+            ))
+
+    def _precompute_model_reprs(self):
+        self.lightning_model.eval()
+        for idx in range(len(self.list_train_loader)):
+            _ = self._get_model_repr(idx)
+
+    def _get_tree_batch(self, idx, device):
+        item = self.list_train_loader[idx]
+        coords = item.coords.clone().detach().to(device).unsqueeze(0)
+        onehot_feat = item.onehot_feat.clone().detach().to(device).unsqueeze(0)
+        onehot_thresh = item.onehot_thresh.clone().detach().to(device).unsqueeze(0)
+        onehot_class = item.onehot_class.clone().detach().to(device).unsqueeze(0)
+        return coords, onehot_feat, onehot_thresh, onehot_class
+
+    def _get_model_repr(self, idx):
+        if idx in self.model_repr_cache:
+            return self.model_repr_cache[idx]
+
+        device = self.lightning_model.device
+        coords, onehot_feat, onehot_thresh, onehot_class = self._get_tree_batch(idx, device)
+
+        adapted_learner, *_ = self.lightning_model._inner_loop_inference(
+            model_input=coords,
+            onehot_feat=onehot_feat,
+            onehot_thresh=onehot_thresh,
+            onehot_class=onehot_class,
+        )
+
+        base_model = getattr(adapted_learner, "module", adapted_learner)
+        with torch.no_grad():
+            h_feat = base_model.net_feat(coords).squeeze(0).detach().cpu()
+            h_class = base_model.net_class(coords).squeeze(0).detach().cpu()
+            h_thresh = base_model.net_thresh(coords).squeeze(0).detach().cpu()
+
+        rep = {"feat": h_feat, "class": h_class, "thresh": h_thresh}
+        self.model_repr_cache[idx] = rep
+        return rep
+
+    @staticmethod
+    def _linear_map_distance(A, B, ridge=1e-6):
+        # A,B: [n_nodes, hidden_dim]
+        A = A.float()
+        B = B.float()
+
+        AtA = A.T @ A
+        d = AtA.shape[0]
+        I = torch.eye(d, dtype=A.dtype, device=A.device)
+
+        W = torch.linalg.solve(AtA + ridge * I, A.T @ B)  # Ridge-LS
+        pred = A @ W
+
+        mse = torch.mean((pred - B) ** 2)
+        var = torch.var(B)
+        return (mse / (var + 1e-8)).item()
+
+    def _model_distance(self, idx_a, idx_b):
+        rep_a = self._get_model_repr(idx_a)
+        rep_b = self._get_model_repr(idx_b)
+
+        dists = []
+        for key in ("feat", "class", "thresh"):
+            A = rep_a[key]
+            B = rep_b[key]
+            d_ab = self._linear_map_distance(A, B)
+            d_ba = self._linear_map_distance(B, A)
+            dists.append(0.5 * (d_ab + d_ba))
+
+        return float(np.mean(dists))
+
 
     def represent(self, tree, X_train=None):
         pass
 
     def similarity(self, representation_a, representation_b):
-        """Similarity can either be calculated in the embedding space directly or through the output of the meta-model."""
         coords_a, onehot_feat_a, onehot_class_a, onehot_thresh_a = self.list_train_loader[representation_a].coords.unsqueeze(0), self.list_train_loader[representation_a].onehot_feat.unsqueeze(0), self.list_train_loader[representation_a].onehot_thresh.unsqueeze(0), self.list_train_loader[representation_a].onehot_class.unsqueeze(0) 
         coords_b, onehot_feat_b, onehot_class_b, onehot_thresh_b = self.list_train_loader[representation_b].coords.unsqueeze(0), self.list_train_loader[representation_b].onehot_feat.unsqueeze(0), self.list_train_loader[representation_b].onehot_thresh.unsqueeze(0), self.list_train_loader[representation_b].onehot_class.unsqueeze(0) 
         if self.comparing == "encoding":
@@ -143,12 +259,14 @@ class INDTreeRepresentation(BaseRepresentation):
             class_distance = torch.norm(onehot_class_a - onehot_class_b, p=2).item()
             total_distance = coords_distance + feat_distance + thresh_distance + class_distance
         elif self.comparing == "output":
-            feat_out_a, thresh_out_a, class_out_a = self.lightning_model(coords_a, onehot_feat_a, onehot_thresh_a, onehot_class_a)
-            feat_out_b, thresh_out_b, class_out_b = self.lightning_model(coords_b, onehot_feat_b, onehot_thresh_b, onehot_class_b)
+            feat_out_a, thresh_out_a, class_out_a = self.cached_outputs[representation_a]
+            feat_out_b, thresh_out_b, class_out_b = self.cached_outputs[representation_b]
             feat_distance = torch.norm(feat_out_a - feat_out_b, p=2).item()
             thresh_distance = torch.norm(thresh_out_a - thresh_out_b, p=2).item()
             class_distance = torch.norm(class_out_a - class_out_b, p=2).item()
             total_distance = feat_distance + thresh_distance + class_distance
+        elif self.comparing == "model":
+            total_distance = self._model_distance(representation_a, representation_b)
         else:
             raise ValueError("Comparison base not implemented.")
         return 1 / (1 +  float(total_distance))
