@@ -5,8 +5,8 @@ Comparing decision trees is inherently non-trivial due to their structure. While
 Representations of said decision trees enable a structural and functional comparison by abstracting some information and thereby gaining the ability to quantify similarity.
 
 This benchmark therefore explores the usefulness of different decision tree representations by  
-(i) assessing the representations in an isolated setting by using controlled perturbations and measuring correlations between representation distances, performance differences, and structural distances, and  
-(ii) measuring the representation’s effectiveness on downstream tasks by using their distances for a diverse subforest selection which is then compared against subforests chosen at random or solely based on out-of-bag (OOB) accuracy.
+(i) assessing the representations in an isolated setting by using controlled perturbations and measuring correlations between representation distances, performance differences, and feature importance shift, and  
+(ii) measuring the representation’s effectiveness on downstream tasks by using their distances for a diverse subforest selection which is then compared against subforests chosen at random or solely based on out-of-bag (OOB) accuracy/MCC.
 
 ## Quickstart
 ```sh
@@ -37,7 +37,7 @@ There are multiple parameters that heavily influence runtime; adjust those accor
 - [`src/representations/indtree_representation.py`](tree_representation_benchmark/src/representations/indtree_representation.py) (line 115): batch_size=1024 (adjust based on your hardware)
 - [`src/representations/indtree_representation.py`](tree_representation_benchmark/src/representations/indtree_representation.py) (line 119): max_epochs=10 (the authors suggest 2000; for this task, 10 might be enough)
 - [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (lines 5-6): representation_benchmark:true AND subforest_selection:true (only choose what you need)
-- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (line 10): n_splits:3 (number of cross-validation folds multiplies time needed)
+- [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (line 10): n_splits:5 (number of cross-validation folds multiplies time needed)
 - [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (line 27): random_forest_size:300 (increasing number of decision trees in random forest drastically increases runtime and memory requirements)
 - [`src/benchmark_runs.yaml`](tree_representation_benchmark/src/benchmark_runs.yaml) (lines 25-26): intensities:[0.2,0.4,0.6,0.8,1] AND perturbation_runs:1 (perturbation experiment has to deal with random_forest_size \* |intensities| \* |perturbations| \* |perturbation_runs| trees)
 
@@ -55,15 +55,6 @@ datasets/
       features.csv
 ```
 
-Expected folder layout (per TCGA dataset):
-```
-datasets/
-  preprocessed_TCGA/
-    <name>/
-      exp
-      survival
-```
-
 Notes: 
 * Categorical/binary features are **dropped** as sklearn DecisionTreeClassifier cannot use them (only continuous/integer-like types are kept).
 * Splits are created via stratified cross-validation.
@@ -77,43 +68,22 @@ Notes:
 | Leaf Profile | (novel) | Distribution Vector | Earth Mover's Distance |
 | Feature Graph | [Sirocchi et al.](https://doi.org/10.1186/s13040-025-00430-3) | Graph | Correlation-adjusted Frobenius Distance |
 | Topological Forest | [Bayir et al.](https://doi.org/10.1109/ACCESS.2022.3229008) | Metric Vector | Mapper Graph Shortest-Path |
-| INDTree | [Spinnato et al.](https://www.esann.org/sites/default/files/proceedings/2025/ES2025-85.pdf) | Function | Embedding Space Euclidean Distance |
+| INDTree | [Spinnato et al.](https://www.esann.org/sites/default/files/proceedings/2025/ES2025-85.pdf) | Network Weights | Embedding Space Euclidean Distance |
 
 The following figure shows how a simple decision tree is converted into each respective representation.
-<img width="1158" height="1098" alt="image" src="https://github.com/user-attachments/assets/cd3ac300-680c-4bb1-b182-99c08bf1675d" />
+<img width="1002" height="1178" alt="image" src="https://github.com/user-attachments/assets/cab588d5-2b79-4e3f-a66d-8220eac6c427" />
 
 ## Representation Benchmark
 
-This benchmark evaluates how well different tree representations capture meaningful differences between decision trees. For each base tree, we compute a representation embedding and compare it to embeddings of systematically perturbed versions of the same tree. The resulting representation distances are then related to (i) changes in predictive performance and (ii) a structural distance based on tree edit distance, to assess whether a representation is sensitive to relevant model changes.
+This benchmark evaluates how well different tree representations capture meaningful differences between decision trees. For each base tree, we compute a representation embedding and compare it to embeddings of systematically perturbed versions of the same tree. The resulting representation distances are then related to (i) changes in predictive performance and (ii) a shift in feature importance, to assess whether a representation is sensitive to relevant model changes.
 
 ## Subforest Selection
 
-Subforest selection studies how to choose a small, diverse subset of trees from a larger random forest while retaining predictive quality. The code builds pairwise distance matrices from the selected representations and applies clustering-based selection (e.g., k-medoids, agglomerative, density-based) to pick representative trees. Selected subforests are evaluated on held-out test data and compared against baselines such as random selection and top-OOB trees.
+Subforest selection studies how to choose a small, diverse subset of trees from a larger random forest while retaining predictive quality. The code builds pairwise distance matrices from the selected representations and applies some selection strategy (e.g., Clustering, Performance-Clustering, Density-based Selection, Greedy Selection, Simulated-Annealing, Genetic Selection) to pick representative trees. Selected subforests are evaluated on held-out test data and compared against baselines such as random selection and top-OOB trees.
 
 ## Perturbations
 
 Perturbations are controlled modifications applied directly to sklearn DecisionTreeClassifiers to generate tree variants with different degrees of change. Implemented perturbations include threshold changes, feature changes, node swaps, node removals, node additions, and combined perturbations. After each perturbation, affected subtree statistics are updated so the modified tree remains executable, enabling consistent measurement of both representation distances and structural differences.
-
-## Structural difference (tree edit distance)
-
-Structural difference is computed via Zhang–Shasha tree edit distance using `zss` in
-[`src/structural_difference.py`](tree_representation_benchmark/src/structural_difference.py) ([`compute_structural_difference`](tree_representation_benchmark/src/structural_difference.py)).
-
-### Node labels
-Each sklearn node is mapped to a `zss.Node` label:
-* Leaf: `"Leaf"`
-* Internal: `"f<feature_idx>:<threshold>"` (threshold formatted to 3 decimals)
-
-### Implemented costs
-The label distance is defined in `substitution_cost` inside [`compute_structural_difference`](tree_representation_benchmark/src/structural_difference.py):
-
-* **Insertion / deletion**: if either label is empty (`''`), cost = `1`
-* **Exact match**: cost = `0`
-* **Leaf vs internal**: cost = `1`
-* **Internal vs internal, different feature**: cost = `2`
-* **Internal vs internal, same feature**: cost is normalized threshold difference:
-  Let $r = \max(X[:, f]) - \min(X[:, f])$ on the training data and
-  $d = \frac{|t_a - t_b|}{r}$ (or $0$ if $r=0$). The cost is `min(d, 0.5)`.
 
 ## Outputs
 
