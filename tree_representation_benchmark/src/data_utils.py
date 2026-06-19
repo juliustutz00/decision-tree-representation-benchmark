@@ -1,157 +1,62 @@
 import numpy as np
 import pandas as pd
+import os
 from pathlib import Path
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import VarianceThreshold
+from sklearn.impute import KNNImputer
 
+DATA_ROOT = Path(os.environ["SUBFOREST_WORKDIR"]).resolve() / "datasets"
 
-"""
-Dataset loading and preprocessing helpers for UCI and preprocessed TCGA sources.
+if not DATA_ROOT.exists():
+    raise RuntimeError(f"DATA_ROOT does not exist: {DATA_ROOT}")
 
-Outputs are fold tuples:
-    (X_train, X_test, y_train, y_test)
-plus a `features_df` with per-feature type metadata.
+# datasets searched by myself, from 
+# Bayir, Murat Ali, et al. "Topological forest." IEEE Access 10 (2022): 131711-131721.
+# and 
+# Guidotti, Riccardo, et al. "Generative model for decision trees." Proceedings of the AAAI Conference on Artificial Intelligence. Vol. 38. No. 19. 2024.
 
-Datasets searched by myself, from Bayir, Murat Ali, et al. "Topological forest." IEEE Access 10 (2022): 131711-131721. and 
-Guidotti, Riccardo, et al. "Generative model for decision trees." Proceedings of the AAAI Conference on Artificial Intelligence. Vol. 38. No. 19. 2024.
-"""
-
+# UCI
 # https://archive.ics.uci.edu/dataset/53/iris
 def get_iris_dataset(n_splits=3, n_samples=10000, seed=0):
     return __load_ucirepo_dataset(uci_name="iris", n_splits=n_splits, n_samples=n_samples, seed=seed), "iris_UCI"
 
-# https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic
-def get_breast_cancer_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="breast_cancer", n_splits=n_splits, n_samples=n_samples, seed=seed), "breast_cancer_UCI"
+def get_cervical_cancer_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="cervical_cancer", n_splits=n_splits, n_samples=n_samples, seed=seed), "cervical_cancer_UCI"
 
-# https://archive.ics.uci.edu/dataset/159/magic+gamma+telescope
-def get_MAGIC_gamma_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="magic_gamma", n_splits=n_splits, n_samples=n_samples, seed=seed), "MAGIC_gamma_UCI"
+def get_connectionist_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="connectionist", n_splits=n_splits, n_samples=n_samples, seed=seed), "connectionist_UCI"
 
-# https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset
-def get_AI4I_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="AI4I", n_splits=n_splits, n_samples=n_samples, seed=seed), "AI4I_UCI"
+def get_credit_approval_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="credit_approval", n_splits=n_splits, n_samples=n_samples, seed=seed), "credit_approval_UCI"
 
-# https://archive.ics.uci.edu/dataset/2/adult
-def get_adult_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="adult", n_splits=n_splits, n_samples=n_samples, seed=seed), "adult_UCI"
+def get_cylinder_bands_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="cylinder_bands", n_splits=n_splits, n_samples=n_samples, seed=seed), "cylinder_bands_UCI"
 
-# https://archive.ics.uci.edu/dataset/59/letter+recognition
-def get_letter_recognition_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="letter_recognition", n_splits=n_splits, n_samples=n_samples, seed=seed), "letter_recognition_UCI"
+def get_DARWIN_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="DARWIN", n_splits=n_splits, n_samples=n_samples, seed=seed), "DARWIN_UCI"
 
-# https://archive.ics.uci.edu/dataset/222/bank+marketing
-def get_bank_marketing_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="bank_marketing", n_splits=n_splits, n_samples=n_samples, seed=seed), "bank_marketing_UCI"
+def get_heart_disease_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="heart_disease", n_splits=n_splits, n_samples=n_samples, seed=seed), "heart_disease_UCI"
 
-# https://archive.ics.uci.edu/dataset/267/banknote+authentication
-def get_banknote_authentication_dataset(n_splits=3, n_samples=10000, seed=0):
-    return __load_ucirepo_dataset(uci_name="banknote_authentication", n_splits=n_splits, n_samples=n_samples, seed=seed), "banknote_authentication_UCI"
-    
+def get_japanese_credit_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="japanese_credit", n_splits=n_splits, n_samples=n_samples, seed=seed), "japanese_credit_UCI"
 
-def get_aml_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("aml", n_splits=n_splits, n_features=n_features, seed=seed), "aml_TCGA"
+def get_musk_1_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="musk_1", n_splits=n_splits, n_samples=n_samples, seed=seed), "musk_1_UCI"
 
-def get_bic_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("breast", n_splits=n_splits, n_features=n_features, seed=seed), "bic_TCGA"
+def get_statlog_heart_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="statlog_heart", n_splits=n_splits, n_samples=n_samples, seed=seed), "statlog_heart_UCI"
 
-def get_coad_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("colon", n_splits=n_splits, n_features=n_features, seed=seed), "coad_TCGA"
-
-def get_gbm_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("gbm", n_splits=n_splits, n_features=n_features, seed=seed), "gbm_TCGA"
-
-def get_kirc_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("kidney", n_splits=n_splits, n_features=n_features, seed=seed), "kirc_TCGA"
-
-def get_lihc_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("liver", n_splits=n_splits, n_features=n_features, seed=seed), "lihc_TCGA"
-
-def get_lusc_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("lung", n_splits=n_splits, n_features=n_features, seed=seed), "lusc_TCGA"
-
-def get_skcm_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("melanoma", n_splits=n_splits, n_features=n_features, seed=seed), "skcm_TCGA"
-
-def get_ov_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("ovarian", n_splits=n_splits, n_features=n_features, seed=seed), "ov_TCGA"
-
-def get_sarc_TCGA_dataset(n_splits=3, n_features=1000, seed=0):
-    return __get_preprocessed_TCGA_dataset("sarcoma", n_splits=n_splits, n_features=n_features, seed=seed), "sarc_TCGA"
-
-
-def __get_preprocessed_TCGA_dataset(dataset_name, n_splits=3, n_features=1000, seed=0):
-    """
-    Load one TCGA dataset, align expression/survival tables, select top-variance
-    features on each train fold, and return stratified folds.
-
-    Source: https://acgt.cs.tau.ac.il/multi_omic_benchmark/download.html
-    """
-    exp = pd.read_csv(r"..\datasets\preprocessed_TCGA\\" + dataset_name + r"\exp", sep=r"\s+", header=0, index_col=0)
-    exp = exp.T
-    if dataset_name in ["breast", "gbm", "lung"]:
-        exp.index = exp.index.str.rsplit('.', n=1).str[0]
-        exp = exp[~exp.index.duplicated(keep="last")]
-    exp = exp.drop_duplicates(keep="last")
-    exp.index = exp.index.str.upper()
-    
-    survival = pd.read_csv(r"..\datasets\preprocessed_TCGA\\" + dataset_name + r"\survival", sep=r"\s+", header=0)
-    survival["PatientID"] = survival["PatientID"].str.replace("-", ".", regex=False)
-    survival = survival.drop_duplicates(keep="last")
-    survival = survival.set_index("PatientID")
-    survival = survival.drop(["Survival"], axis=1)
-    survival.index = survival.index.str.upper()
-    
-    common_ids = exp.index.intersection(survival.index)
-    exp = exp.loc[common_ids]
-    survival = survival.loc[common_ids]
-
-    mask = survival.notna().all(axis=1)
-    exp = exp.loc[mask]
-    survival = survival.loc[mask]
-
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-
-    folds = []
-
-    for train_idx, test_idx in skf.split(exp, survival["Death"]):
-        train_ids = exp.index[train_idx]
-        test_ids = exp.index[test_idx]
-
-        X_train = exp.loc[train_ids]
-        X_test  = exp.loc[test_ids]
-        y_train = survival.loc[train_ids]
-        y_test  = survival.loc[test_ids]
-
-        selector = VarianceThreshold()
-        selector.fit(X_train)
-        variances = selector.variances_
-        top_1000_idx = variances.argsort()[::-1][:n_features]
-
-        X_train = X_train.iloc[:, top_1000_idx].to_numpy()
-        X_test  = X_test.iloc[:, top_1000_idx].to_numpy()
-
-        y_train = y_train.to_numpy().ravel().astype(int)
-        y_test  = y_test.to_numpy().ravel().astype(int)
-
-        folds.append((X_train, X_test, y_train, y_test))
-
-    features_df = pd.DataFrame({"type": ["continuous"] * n_features})
-
-    return folds, features_df
+def get_waveform_dataset(n_splits=3, n_samples=10000, seed=0):
+    return __load_ucirepo_dataset(uci_name="waveform", n_splits=n_splits, n_samples=n_samples, seed=seed), "waveform_UCI"
 
 
 def __load_ucirepo_dataset(uci_name, n_splits=3, n_samples=10000, seed=None):
-    """
-    Load one local UCI dataset folder (`X.npy`, `y.npy`, `features.csv`), enforce
-    numeric feature matrix, optional subsampling, and stratified folds.
-
-    Source: check `get_<dataset>_dataset` functions for UCI URLs.
-    """
     rng = np.random.RandomState(seed)
 
-    base_path = Path("../datasets/UCI") / uci_name
+    base_path = DATA_ROOT / "UCI" / uci_name
 
     X = np.load(base_path / "X.npy", allow_pickle=True)
     y = np.load(base_path / "y.npy", allow_pickle=True)
@@ -182,8 +87,13 @@ def __load_ucirepo_dataset(uci_name, n_splits=3, n_samples=10000, seed=None):
         else:
             y = y.ravel()
 
-    if y.dtype.kind in {"U", "S", "O"}:
+    valid_mask = ~pd.isna(y)
+    X = X[valid_mask]
+    y = y[valid_mask]
+
+    if y.dtype.kind in {"U", "S", "O"} or uci_name == "statlog_heart":
         y = LabelEncoder().fit_transform(y.ravel())
+    y = y.astype(np.int64)
 
     if X.shape[0] != y.shape[0]:
         min_n = min(X.shape[0], y.shape[0])
@@ -220,6 +130,9 @@ def __load_ucirepo_dataset(uci_name, n_splits=3, n_samples=10000, seed=None):
                 X_obj[:, col_idx] = np.where(np.isnan(coerced), mean, coerced)
 
     X_numeric = X_obj.astype(float)
+    if np.isnan(X_numeric).any():
+        imputer = KNNImputer(n_neighbors=5)
+        X_numeric = imputer.fit_transform(X_numeric)
 
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
@@ -230,3 +143,36 @@ def __load_ucirepo_dataset(uci_name, n_splits=3, n_samples=10000, seed=None):
         folds.append((X_train, X_test, y_train, y_test))
 
     return folds, features_df
+
+
+
+def _random_resample(X, y, mode, random_state):
+    # mode: "under" | "over"
+    rng = np.random.RandomState(random_state)
+    y = np.asarray(y)
+    classes, counts = np.unique(y, return_counts=True)
+
+    if len(classes) < 2:
+        return X, y
+
+    target = counts.min() if mode == "under" else counts.max()
+
+    sampled_idx = []
+    for cls, cnt in zip(classes, counts):
+        cls_idx = np.flatnonzero(y == cls)
+        if mode == "under":
+            if cnt > target:
+                cls_idx = rng.choice(cls_idx, size=target, replace=False)
+        else:  # over
+            if cnt < target:
+                cls_idx = rng.choice(cls_idx, size=target, replace=True)
+        sampled_idx.append(cls_idx)
+
+    sampled_idx = np.concatenate(sampled_idx)
+    rng.shuffle(sampled_idx)
+
+    return X[sampled_idx], y[sampled_idx]
+
+    np.save("F:/SUBFOREST/datasets/UCI/" + str(name) + "/X.npy", X.to_numpy())
+    np.save("F:/SUBFOREST/datasets/UCI/" + str(name) + "/y.npy", y.to_numpy())
+    features_df.to_csv("F:/SUBFOREST/datasets/UCI/" + str(name) + "/features.csv", index=False)'''
