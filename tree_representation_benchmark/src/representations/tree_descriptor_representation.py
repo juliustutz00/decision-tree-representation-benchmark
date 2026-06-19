@@ -1,23 +1,28 @@
 import numpy as np
 import networkx as nx
-from scipy.spatial.distance import cosine, euclidean
+from scipy.spatial.distance import cosine
 
 from .base import BaseRepresentation
 
-# novel representation
 class TreeDescriptorRepresentation(BaseRepresentation):
-    """Feature + structure metric vector representation for decision trees."""
 
-    def __init__(self, weights=None, metric="cosine"):
-        self.weights = weights
+    def __init__(self, weights=None, metric="cosine", X=None):
+        self.weights = weights if weights is not None else {
+            'structure': 0.5,
+            'features': 0.3,
+            'thresholds': 0.2
+        }
         self.metric = metric
+        self.X = X
+        
+        if X is not None:
+            C = np.abs(np.corrcoef(X, rowvar=False))
+            np.fill_diagonal(C, 1.0)
+            self.corr_matrix = np.nan_to_num(C)
+        else:
+            self.corr_matrix = None
 
     def represent(self, tree, X_train=None):
-        """
-        Encode tree into a fixed-length numeric descriptor vector.
-
-        Source: novel representation
-        """
         G = self.tree_to_networkx(tree)
         n_nodes = tree.tree_.node_count
         max_depth = tree.tree_.max_depth
@@ -28,32 +33,30 @@ class TreeDescriptorRepresentation(BaseRepresentation):
         leaf_depths = []
         leaf_samples = []
         for leaf in leaves:
-            depth = len(nx.shortest_path(G, root, leaf)) - 1
+            path = nx.shortest_path(G, root, leaf)
+            depth = len(path) - 1
             leaf_depths.append(depth)
             leaf_samples.append(tree.tree_.n_node_samples[leaf])
             
         avg_path_len = np.mean(leaf_depths) if leaf_depths else 0
         total_samples = tree.tree_.n_node_samples[root]
         weighted_path_len = np.sum(np.array(leaf_depths) * np.array(leaf_samples)) / total_samples
-        
         balance_std = np.std(leaf_depths) if leaf_depths else 0
         
         depths_dict = nx.single_source_shortest_path_length(G, root)
         depth_counts = np.bincount(list(depths_dict.values()))
         max_width = np.max(depth_counts) if len(depth_counts) > 0 else 0
-
         leaf_impurities = tree.tree_.impurity[leaves]
         avg_leaf_impurity = np.mean(leaf_impurities)
 
-        n_features = tree.tree_.n_features
+        n_features = X_train.shape[1]
         used_features = tree.tree_.feature
         internal_mask = used_features >= 0
         
         unique_features_used = len(np.unique(used_features[internal_mask]))
         feature_diversity = unique_features_used / n_features if n_features > 0 else 0
-
-        feat_importance = np.nan_to_num(tree.feature_importances_)
-
+        
+        # structure metrics
         structural_metrics = np.array([
             np.log1p(n_nodes),
             np.log1p(max_depth),
@@ -61,125 +64,72 @@ class TreeDescriptorRepresentation(BaseRepresentation):
             np.log1p(avg_path_len),
             np.log1p(weighted_path_len),
             balance_std,
-            avg_leaf_impurity
+            avg_leaf_impurity,
+            feature_diversity
         ])
 
-        feature_counts = np.zeros(n_features, dtype=float)
-        if np.any(internal_mask):
-            counts = np.bincount(used_features[internal_mask], minlength=n_features)
-            feature_counts = counts.astype(float) / ((n_nodes-1) / 2)
-
-        thresholds = np.zeros(n_features, dtype=float)
-        if np.any(internal_mask):
-            for f in range(n_features):
-                f_thresholds = tree.tree_.threshold[used_features == f]
-                if len(f_thresholds) > 0:
-                    thresholds[f] = np.mean(f_thresholds)
-
-        combined_vector = np.concatenate([
-            structural_metrics, 
-            feat_importance,
-            feature_counts,
-            np.array([feature_diversity]), 
-            thresholds
-        ])
-
-        if self.weights is None:
-            self.weights = np.ones(len(combined_vector))
-            
-        return combined_vector * self.weights
-    
-    def represent_TF(self, tree, X_train=None):
-        # graph metrics are chosen accordingly to the Toplogical Forest Paper + feature stuff
-        # however, some of the metrics do not make sense for for trees, therefore this function is not used
-        G = self.tree_to_networkx(tree)
-
-        # graph-information
-        if not nx.is_strongly_connected(G):
-            G_sub = max(nx.strongly_connected_components(G), key=len)
-            G_sub = G.subgraph(G_sub).copy()
-            diameter = nx.diameter(G_sub)
-        else:
-            diameter = nx.diameter(G)
-        number_of_nodes = G.number_of_nodes()
-        number_of_edges = G.number_of_edges()
-        triad_keys = ['003', '012', '102', '021D', '021U', '021C', '111D', '111U', '030T', '030C', '201', '120D', '120U', '120C', '210', '300']
-        three_node_motifs = [nx.triadic_census(G)[k] for k in triad_keys]
-        clustering_coefficient = nx.average_clustering(G)
-
-        # node-information
-        avg_in_degree = np.mean(list(dict(G.in_degree()).values()))
-        avg_out_degree = np.mean(list(dict(G.out_degree()).values()))
-        avg_degree = np.mean(list(dict(G.degree()).values()))
-        if nx.is_strongly_connected(G):
-            avg_path_length = nx.average_shortest_path_length(G)
-        else:
-            largest_cc = max(nx.strongly_connected_components(G), key=len)
-            subG = G.subgraph(largest_cc)
-            avg_path_length = nx.average_shortest_path_length(subG)
-        avg_betweenness_centrality = np.mean(list(nx.betweenness_centrality(G, normalized=True).values()))
-
-        metrics = np.array([
-            diameter,
-            number_of_nodes,
-            number_of_edges,
-            *three_node_motifs,
-            clustering_coefficient,
-            avg_in_degree,
-            avg_out_degree,
-            avg_degree,
-            avg_path_length,
-            avg_betweenness_centrality
-        ], dtype=float)
-
-        # feature-information
-        n_features = tree.tree_.n_features
-        used_features = tree.tree_.feature
-        internal_mask = used_features >= 0
-
-        feature_counts = np.zeros(n_features, dtype=float)
-        if np.any(internal_mask):
-            counts = np.bincount(used_features[internal_mask], minlength=n_features)
-            feature_counts[:len(counts)] = counts
-
-        # Feature importances
-        feat_importance = tree.feature_importances_
-        feat_importance = np.nan_to_num(feat_importance)
-
-        # threshold-statistics
-        thresholds = np.zeros(n_features, dtype=float)
-        if np.any(internal_mask):
-            for f in range(n_features):
-                f_thresholds = tree.tree_.threshold[used_features == f]
-                if len(f_thresholds) > 0:
-                    thresholds[f] = np.mean(f_thresholds) 
-
-        combined_vector = np.concatenate([
-            np.array(metrics, dtype=float),
-            feature_counts,
-            feat_importance,
-            thresholds
-        ])
-
-        if self.weights is None:
-            base_weights = np.array([0.1, 0.1, 0.1, *([0.1 / 16] * 16), 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-            self.weights = np.concatenate([
-                base_weights,
-                (np.ones(n_features * 3) / 3)  # Feature counts, importance, thresholds
-            ])
-        combined_vector *= self.weights
-        return combined_vector
+        # feature metrics
+        feat_importance = np.nan_to_num(tree.feature_importances_)
         
-    def similarity(self, representation_a, representation_b):
-        """Similarity via cosine or inverse-Euclidean transform."""
-        if self.metric == "cosine":
-            return 1 - cosine(representation_a, representation_b)
-        elif self.metric == "euclidean":
-            return 1 / (1 + euclidean(representation_a, representation_b))
+        feature_counts = np.zeros(n_features)
+        if np.any(internal_mask):
+            counts = np.bincount(used_features[internal_mask], minlength=n_features)
+            feature_counts = counts.astype(float) / ((n_nodes - 1) / 2)
+
+        # thresholds
+        thresholds = np.full(n_features, np.nan)
+        if np.any(internal_mask):
+            for f in range(n_features):
+                f_mask = (used_features == f)
+                if np.any(f_mask):
+                    f_thresholds = tree.tree_.threshold[f_mask]
+                    mean_threshold = np.mean(f_thresholds)
+                    min_val, max_val = X_train[:, f].min(), X_train[:, f].max()
+                    thresholds[f] = (mean_threshold - min_val) / (max_val - min_val) if max_val > min_val else 0.5
+
+        return {
+            "structure": structural_metrics,
+            "importance": feat_importance,
+            "counts": feature_counts,
+            "thresholds": thresholds
+        }
+
+    def similarity(self, rep_a, rep_b):
+        sim_struct = 1 - cosine(rep_a["structure"], rep_b["structure"])
+        
+
+        sim_imp = self._soft_cosine_similarity(rep_a["importance"], rep_b["importance"])
+        sim_cnt = self._soft_cosine_similarity(rep_a["counts"], rep_b["counts"])
+        sim_feat = (sim_imp + sim_cnt) / 2
+
+        mask_a, mask_b = ~np.isnan(rep_a["thresholds"]), ~np.isnan(rep_b["thresholds"])
+        intersection = mask_a & mask_b
+        if np.any(intersection):
+            diffs = np.abs(rep_a["thresholds"][intersection] - rep_b["thresholds"][intersection])
+            sim_thresh = 1.0 - np.mean(diffs)
         else:
-            raise ValueError("Undefined metric.")
+            sim_thresh = 0.0
 
+        return (self.weights['structure'] * sim_struct +
+                self.weights['features'] * sim_feat +
+                self.weights['thresholds'] * sim_thresh)
+    
 
+    def _soft_cosine_similarity(self, v1, v2):
+        if self.corr_matrix is None:
+            return 1 - cosine(v1, v2) if np.any(v1) and np.any(v2) else 0.0
+        
+        # (v1^T * C * v2) / sqrt((v1^T * C * v1) * (v2^T * C * v2))
+        v1_C = v1 @ self.corr_matrix
+        v2_C = v2 @ self.corr_matrix
+        
+        numerator = v1_C @ v2
+        denominator = np.sqrt((v1_C @ v1) * (v2_C @ v2))
+        
+        if denominator == 0:
+            return 0.0
+        return numerator / denominator
+    
     def tree_to_networkx(self, tree):
         G = nx.DiGraph()
         n_nodes = tree.tree_.node_count
@@ -193,3 +143,4 @@ class TreeDescriptorRepresentation(BaseRepresentation):
                 G.add_edge(i, children_right[i])
 
         return G
+        
