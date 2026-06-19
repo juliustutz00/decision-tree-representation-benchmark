@@ -5,32 +5,33 @@ import json
 from datetime import datetime, timezone
 import time
 from src.representations.feature_graph_representation import FeatureGraphRepresentation                 # type: ignore
+from src.representations.tree_descriptor_representation import TreeDescriptorRepresentation             # type: ignore
 from src.representations.topological_forest_representation import TopologicalForestRepresentation       # type: ignore
 from src.representations.indtree_representation import INDTreeRepresentation                            # type: ignore
-from src.structural_difference import compute_structural_difference                                     # type: ignore
+from src.perturbation_metrics import compute_structural_difference, compute_feature_importance_difference   # type: ignore
 from src.perturbations import remove_nodes                                                              # type: ignore
 from src.benchmark_utils import (                                                                       # type: ignore
     train_own_random_forest,
     evaluate_forest,
     prediction_agreement,
     similarity_to_distance_matrix,
-    select_subforest_via_clustering,
     compute_similarity_to_base_tree,
-    get_combined_correlation
+    get_combined_correlation,
+    tree_metric_score, 
+    shared_metric_cols
+)
+from src.selection_strategies import (                                                                  # type: ignore
+    select_subforest_via_clustering,
 )
 from src.plotting import (                                                                              # type: ignore
     plot_similarity_performance, 
-    plot_similarity_structural_difference
+    plot_similarity_fi_difference,
+    plot_and_save_mds,
+    plot_accuracy_vs_subforest_size,
+    plot_feature_importance_stability_vs_subforest_size,
+    print_clustering_differences_vs_baseline,
 )
 
-"""
-Core benchmark orchestration.
-
-This module runs:
-1) representation perturbation benchmark, and
-2) subforest selection benchmark,
-including optional plotting and result persistence.
-"""
 
 def run_benchmark(
     X_train,
@@ -56,17 +57,10 @@ def run_benchmark(
     subforest_selection=True,
     run_id=None,
     fold_idx=None,
+    max_fold_idx=None,
     append_results=True,
     seed=0
 ):
-    """
-    Execute a full benchmark run for one dataset fold.
-
-    Returns
-    -------
-    tuple[pandas.DataFrame | None, pandas.DataFrame | None]
-        (perturbation_results, subforest_results)
-    """
     if not representation_benchmark and not subforest_selection:
         raise ValueError(
             "At least one of representation_benchmark or subforest_selection has to be True."
@@ -116,8 +110,16 @@ def run_benchmark(
             run_topological_forest,
             run_indtree,
             print_progress,
+            results_root,
             seed,
         )
+
+        if df_subforest is not None and len(df_subforest) > 0:
+            dataset_base = _strip_fold_suffix(dataset_name) if dataset_name is not None else None
+            df_subforest = df_subforest.copy()
+            df_subforest.insert(0, "dataset", dataset_base)
+            df_subforest.insert(1, "seed", int(seed))
+            df_subforest.insert(2, "fold", int(fold_idx) if fold_idx is not None else None)
 
     if representation_benchmark and df_perturbations is not None:
         if run_topological_forest:
@@ -141,17 +143,17 @@ def run_benchmark(
             )
             struct_path = os.path.join(
                 base_dir,
-                f"{representation_name.replace(' ', '_')}_similarity_structural_difference_{seed}{fold_suffix}.png",
+                f"{representation_name.replace(' ', '_')}_similarity_fi_difference_{seed}{fold_suffix}.png",
             )
             try:
                 _, r_perf, p_perf = plot_similarity_performance(df_perturbations, representation_name)
-                _, r_struct, p_struct = plot_similarity_structural_difference(df_perturbations, representation_name)
+                _, r_fi, p_fi = plot_similarity_fi_difference(df_perturbations, representation_name)
                 rep_corr_rows.append({
                     "representation": representation_name,
                     "pearson_r_performance": r_perf,
                     "pearson_p_performance": f"{p_perf:.6f}",
-                    "pearson_r_structural_displayed": r_struct,
-                    "pearson_p_structural": f"{p_struct:.6f}",
+                    "pearson_r_feature_importance": r_fi,
+                    "pearson_p_feature_importance": f"{p_fi:.6f}",
                 })
             except Exception as e:
                 if print_progress:
@@ -210,7 +212,7 @@ def run_benchmark(
 
             if 'rep_corr_rows' in locals() and len(rep_corr_rows) > 0:
                 corr_df = pd.DataFrame(rep_corr_rows)
-                corr_file = os.path.join(pert_path, f"{run_id}_performance_ted_correlations.csv")
+                corr_file = os.path.join(pert_path, f"{run_id}_performance_fi_correlations.csv")
                 if append_results:
                     _append_df_as_fold_block_csv(corr_file, corr_df, fold_idx)
                 else:
@@ -231,11 +233,50 @@ def run_benchmark(
 
             csv_file = os.path.join(sub_path, f"{run_id}_subforest.csv")
             if append_results:
-                _append_df_as_fold_block_csv(csv_file, df_subforest, fold_idx)
+                _append_df_csv(csv_file, df_subforest)
             else:
                 df_subforest.to_csv(csv_file, index=False)
 
             _append_jsonl(os.path.join(sub_path, f"{run_id}_metadata.jsonl"), meta)
+
+            if fold_idx == max_fold_idx:
+                dataset_name_shortened = dataset_name[:dataset_name.rfind("_fold")]
+                plots_dir = os.path.join(results_root, "plots")
+                os.makedirs(plots_dir, exist_ok=True)
+
+                # baseline clustering selection
+                baseline_clustering = "k-medoid"
+
+                plot_accuracy_vs_subforest_size(
+                    csv_file,
+                    dataset_name_shortened or "dataset",
+                    dataset_name_shortened or "dataset",
+                    output_dir=plots_dir
+                )
+
+                plot_feature_importance_stability_vs_subforest_size(
+                    csv_file,
+                    dataset_name_shortened or "dataset",
+                    dataset_name_shortened or "dataset",
+                    method="spearman",
+                    output_dir=plots_dir
+                )
+
+                plot_feature_importance_stability_vs_subforest_size(
+                    csv_file,
+                    dataset_name_shortened or "dataset",
+                    dataset_name_shortened or "dataset",
+                    method="kendall",
+                    output_dir=plots_dir
+                )
+
+                print_clustering_differences_vs_baseline(
+                    dataset_paths=[csv_file],
+                    baseline_clustering=baseline_clustering,
+                    output_csv=os.path.join(sub_path, f"{run_id}_selection_strategy_deltas_vs_{baseline_clustering}.csv"),
+                    average_across_subforest_sizes=True,
+                    output_csv_avg=os.path.join(sub_path, f"{run_id}_selection_strategy_deltas_vs_{baseline_clustering}_avg.csv"),
+                )
 
     return df_perturbations, df_subforest
 
@@ -257,12 +298,6 @@ def run_representation_benchmark(
     print_progress=False,
     seed=0,
 ):
-    """
-    Apply perturbations to base trees and compute representation similarities.
-
-    Output columns include perturbation metadata, base/perturbed performance,
-    structural difference, and `sim_<representation>` values.
-    """
     if print_progress:
         print("Running representation benchmark...")
 
@@ -295,6 +330,10 @@ def run_representation_benchmark(
                     X=X_boot 
                 )
                 representation_options[name] = new_feature_graph
+            elif name == "Tree Descriptor":
+                original_feature_graph = R
+                new_tree_descriptor = TreeDescriptorRepresentation(weights=R.weights, metric=R.metric, X=X_boot)
+                representation_options[name] = new_tree_descriptor
         if run_topological_forest:
             topological_forest_R = TopologicalForestRepresentation(tree_vectors=None)
             representation_base_tree = topological_forest_R.represent(base_tree, X_boot)
@@ -302,7 +341,7 @@ def run_representation_benchmark(
         if run_indtree:
             indtree_all_trees.append(base_tree)
 
-        performance_base_tree = base_tree.score(X_oob, y_oob)
+        performance_base_tree = tree_metric_score(base_tree, X_oob, y_oob, metric="mcc")
         representations_base_tree = {
             name: R.represent(base_tree, X_boot)
             for name, R in representation_options.items()
@@ -332,10 +371,9 @@ def run_representation_benchmark(
                             )
                         if run_indtree:
                             indtree_all_trees.append(perturbed_tree)
-                        performance_perturbed_tree = perturbed_tree.score(X_oob, y_oob)
-                        structural_diff = compute_structural_difference(
-                            base_tree, perturbed_tree, X_boot
-                        )
+                        performance_perturbed_tree = tree_metric_score(perturbed_tree, X_oob, y_oob, metric="mcc")
+                        #structural_diff = compute_structural_difference(base_tree, perturbed_tree, X_boot)
+                        fi_difference = compute_feature_importance_difference(base_tree, perturbed_tree, X_boot, correlation_adjustment=False)
 
                         similarities = {}
                         for name, R in representation_options.items():
@@ -353,10 +391,13 @@ def run_representation_benchmark(
                                 "strength": s,
                                 "performance_base": performance_base_tree,
                                 "performance_perturbed": performance_perturbed_tree,
-                                "structural_difference": structural_diff,
+                                #"structural_difference": structural_diff,
+                                "feature_importance_difference": fi_difference,
                                 **{f"sim_{k}": v for k, v in similarities.items()},
                             }
                         )
+        if print_progress and False:
+            print("Tree ", idx, " perturbations finished.")
 
     for name, R in representation_options.items():
             if name == "Feature Graph":
@@ -366,6 +407,10 @@ def run_representation_benchmark(
                     X=X_train 
                 )
                 representation_options[name] = new_feature_graph
+            elif name == "Tree Descriptor":
+                original_feature_graph = R
+                new_tree_descriptor = TreeDescriptorRepresentation(weights=R.weights, metric=R.metric, X=X_train)
+                representation_options[name] = new_tree_descriptor
     results = pd.DataFrame(results)
 
     if run_topological_forest:
@@ -391,9 +436,9 @@ def run_representation_benchmark(
         if print_progress:
             print("Computing INDTree similarities.")
 
-        # direct or repr3rows, encoding or output
+        # direct or repr3rows, encoding or output or model
         indtree_R = INDTreeRepresentation(
-            indtree_all_trees, X_train, y_train, "direct", "output", seed
+            indtree_all_trees, X_train, y_train, "direct", "model", seed
         )
         similarity_values = compute_similarity_to_base_tree(
             lambda i, j: indtree_R.similarity(i, j),
@@ -424,13 +469,9 @@ def run_subforest_selection(
     run_topological_forest=False,
     run_indtree=False,
     print_progress=False,
+    results_root=r"..\results",
     seed=0,
 ):
-    """
-    Compare subforest selection strategies for multiple target subforest sizes.
-
-    Includes baselines (full, random, top-OOB) and representation-based clustering.
-    """
     if print_progress:
         print("Running subforest selection...")
 
@@ -469,14 +510,27 @@ def run_subforest_selection(
 
     results.append({
         "representation": "Full Forest",
-        "clustering": None,
+        "selection_strategy": None,
         "full_forest_size": int(n_trees),
         "subforest_size": int(n_trees),
-        "acc": full_forest_eval["metrics"]["accuracy"],
-        "balanced_acc": full_forest_eval["metrics"]["balanced_accuracy"],
-        "macro_f1": full_forest_eval["metrics"]["macro_f1"],
-        "roc_auc": full_forest_eval["metrics"].get("roc_auc", np.nan),
+        **shared_metric_cols(full_forest_eval),
+        "silhouette_score": np.nan,
+        "agreement_with_full_forest": np.nan,
+        "indices": np.nan,
     })
+
+    oob_mccs = []
+    for idx, tree in enumerate(random_forest_trees):
+        oob_idx = oob_indices_list[idx]
+        if oob_idx is None or len(oob_idx) == 0:
+            oob_mccs.append(np.nan)
+        else:
+            try:
+                oob_mccs.append(tree_metric_score(tree, X_train[oob_idx], y_train[oob_idx], metric="mcc"))
+            except:
+                oob_mccs.append(np.nan)
+    oob_mccs_np = np.array(oob_mccs)
+
 
     # Random Subforest baseline
     rng = np.random.RandomState(seed)
@@ -497,19 +551,17 @@ def run_subforest_selection(
         )
 
         results.append({
-            "representation": "Random Subforest",
-            "clustering": None,
+            "representation": "Random",
+            "selection_strategy": None,
             "full_forest_size": int(n_trees),
             "subforest_size": int(s),
-            "acc": random_subforest_eval["metrics"]["accuracy"],
-            "balanced_acc": random_subforest_eval["metrics"]["balanced_accuracy"],
-            "macro_f1": random_subforest_eval["metrics"]["macro_f1"],
-            "roc_auc": random_subforest_eval["metrics"].get("roc_auc", np.nan),
+            **shared_metric_cols(random_subforest_eval),
+            "silhouette_score": np.nan,
             "agreement_with_full_forest": random_subforest_agreement,
             "indices": sorted([int(i) for i in random_subforest_indices]),
         })
 
-    # Top OOB Subforest baseline
+    # Top OOB ACC Subforest baseline
     if oob_indices_list is None or len(oob_indices_list) < len(random_forest_trees):
         raise ValueError("OOB indices list is not available for all trees.")
 
@@ -520,46 +572,87 @@ def run_subforest_selection(
             oob_accs.append(np.nan)
         else:
             try:
-                acc = tree.score(X_train[oob_idx], y_train[oob_idx])
+                acc = tree_metric_score(tree, X_train[oob_idx], y_train[oob_idx], metric="accuracy")
             except Exception:
                 acc = np.nan
             oob_accs.append(acc)
 
     accs_arr = np.array([a if not np.isnan(a) else -np.inf for a in oob_accs])
-    oob_ranked = list(np.argsort(-accs_arr))
-
+    oob_acc_ranked = list(np.argsort(-accs_arr))
     for s in sizes:
-        top_oob_indices = [int(i) for i in oob_ranked[:int(s)]]
+        top_oob_acc_indices = [int(i) for i in oob_acc_ranked[:int(s)]]
 
-        top_oob_eval = evaluate_forest(
+        top_oob_acc_eval = evaluate_forest(
             X_test,
             y_test,
-            [random_forest_trees[idx] for idx in top_oob_indices],
+            [random_forest_trees[idx] for idx in top_oob_acc_indices],
             n_instances_test,
             n_classes
         )
 
-        top_oob_agreement = prediction_agreement(
-            top_oob_eval["hard_predictions"],
+        top_oob_acc_agreement = prediction_agreement(
+            top_oob_acc_eval["hard_predictions"],
             full_forest_eval["hard_predictions"]
         )
 
         results.append({
-            "representation": "Top OOB Subforest",
-            "clustering": None,
+            "representation": "Top OOB ACC",
+            "selection_strategy": None,
             "full_forest_size": int(n_trees),
             "subforest_size": int(s),
-            "acc": top_oob_eval["metrics"]["accuracy"],
-            "balanced_acc": top_oob_eval["metrics"]["balanced_accuracy"],
-            "macro_f1": top_oob_eval["metrics"]["macro_f1"],
-            "roc_auc": top_oob_eval["metrics"].get("roc_auc", np.nan),
-            "agreement_with_full_forest": top_oob_agreement,
-            "indices": sorted(top_oob_indices),
+            **shared_metric_cols(top_oob_acc_eval),
+            "silhouette_score": np.nan,
+            "agreement_with_full_forest": top_oob_acc_agreement,
+            "indices": sorted(top_oob_acc_indices),
+        })
+
+    # Top OOB MCC Subforest baseline
+    if oob_indices_list is None or len(oob_indices_list) < len(random_forest_trees):
+        raise ValueError("OOB indices list is not available for all trees.")
+
+    oob_mccs = []
+    for idx, tree in enumerate(random_forest_trees):
+        oob_idx = oob_indices_list[idx]
+        if oob_idx is None or len(oob_idx) == 0:
+            oob_mccs.append(np.nan)
+        else:
+            try:
+                mcc = tree_metric_score(tree, X_train[oob_idx], y_train[oob_idx], metric="mcc")
+            except Exception:
+                mcc = np.nan
+            oob_mccs.append(mcc)
+
+    mccs_arr = np.array([m if not np.isnan(m) else -np.inf for m in oob_mccs])
+    oob_mcc_ranked = list(np.argsort(-mccs_arr))
+    for s in sizes:
+        top_oob_mcc_indices = [int(i) for i in oob_mcc_ranked[:int(s)]]
+
+        top_oob_mcc_eval = evaluate_forest(
+            X_test,
+            y_test,
+            [random_forest_trees[idx] for idx in top_oob_mcc_indices],
+            n_instances_test,
+            n_classes
+        )
+
+        top_oob_mcc_agreement = prediction_agreement(
+            top_oob_mcc_eval["hard_predictions"],
+            full_forest_eval["hard_predictions"]
+        )
+
+        results.append({
+            "representation": "Top OOB MCC",
+            "selection_strategy": None,
+            "full_forest_size": int(n_trees),
+            "subforest_size": int(s),
+            **shared_metric_cols(top_oob_mcc_eval),
+            "silhouette_score": np.nan,
+            "agreement_with_full_forest": top_oob_mcc_agreement,
+            "indices": sorted(top_oob_mcc_indices),
         })
 
     subforest_distance_matrices = []
 
-    # representation-based subforest selection
     for name, R in representation_options.items():
         if print_progress:
             print("Starting subforest computation for representation:", name)
@@ -572,12 +665,14 @@ def run_subforest_selection(
             lambda i, j: R.similarity(collected_representations[i], collected_representations[j]),
             num_trees,
         )
+        plot_and_save_mds(distance_matrix, oob_mccs_np, name, results_root, seed)
+
         subforest_distance_matrices.append(distance_matrix)
 
         for clustering_method in clustering_methods:
             for s in sizes:
-                subforest_indices = select_subforest_via_clustering(
-                    distance_matrix, int(s), clustering_method, seed
+                subforest_indices, clustering_silhouette_score = select_subforest_via_clustering(
+                    distance_matrix, int(s), clustering_method, seed, random_forest_trees, X_train=X_train, y_train=y_train, oob_indices_list=oob_indices_list, name=name, size=s, savepath=results_root+"/plots"
                 )
 
                 subforest_eval = evaluate_forest(
@@ -595,13 +690,11 @@ def run_subforest_selection(
 
                 results.append({
                     "representation": name,
-                    "clustering": clustering_method,
+                    "selection_strategy": clustering_method,
                     "full_forest_size": int(n_trees),
                     "subforest_size": int(s),
-                    "acc": subforest_eval["metrics"]["accuracy"],
-                    "balanced_acc": subforest_eval["metrics"]["balanced_accuracy"],
-                    "macro_f1": subforest_eval["metrics"]["macro_f1"],
-                    "roc_auc": subforest_eval["metrics"].get("roc_auc", np.nan),
+                    **shared_metric_cols(subforest_eval),
+                    "silhouette_score": clustering_silhouette_score,
                     "agreement_with_full_forest": subforest_agreement,
                     "indices": sorted([int(i) for i in subforest_indices]),
                 })
@@ -610,12 +703,12 @@ def run_subforest_selection(
             end_time = time.time()
             print(f"Finished in {end_time - start_time:.2f} seconds.")
 
-    if len(subforest_distance_matrices) != 0:
+    if len(subforest_distance_matrices) != 0 and False:
         combined_distance_matrix = np.mean(subforest_distance_matrices, axis=0)
 
         for clustering_method in clustering_methods:
             for s in sizes:
-                subforest_indices = select_subforest_via_clustering(
+                subforest_indices, clustering_silhouette_score = select_subforest_via_clustering(
                     combined_distance_matrix, int(s), clustering_method, seed
                 )
 
@@ -634,13 +727,14 @@ def run_subforest_selection(
 
                 results.append({
                     "representation": "Combined",
-                    "clustering": clustering_method,
+                    "selection_strategy": clustering_method,
                     "full_forest_size": int(n_trees),
                     "subforest_size": int(s),
                     "acc": subforest_eval["metrics"]["accuracy"],
-                    "balanced_acc": subforest_eval["metrics"]["balanced_accuracy"],
                     "macro_f1": subforest_eval["metrics"]["macro_f1"],
+                    "mcc": subforest_eval["metrics"]["mcc"],
                     "roc_auc": subforest_eval["metrics"].get("roc_auc", np.nan),
+                    "pr_auc": subforest_eval["metrics"].get("pr_auc", np.nan),
                     "agreement_with_full_forest": subforest_agreement,
                     "indices": sorted([int(i) for i in subforest_indices]),
                 })
@@ -663,11 +757,12 @@ def run_subforest_selection(
             lambda i, j: topological_forest_R.similarity(i, j),
             num_trees
         )
+        plot_and_save_mds(distance_matrix, oob_mccs_np, "Topological Forest", results_root, seed)
 
         for clustering_method in clustering_methods:
             for s in sizes:
-                subforest_indices = select_subforest_via_clustering(
-                    distance_matrix, int(s), clustering_method, seed
+                subforest_indices, clustering_silhouette_score = select_subforest_via_clustering(
+                    distance_matrix, int(s), clustering_method, seed, random_forest_trees, X_train=X_train, y_train=y_train, oob_indices_list=oob_indices_list, name=name, size=s, savepath=results_root+"/plots"
                 )
 
                 subforest_eval = evaluate_forest(
@@ -685,13 +780,11 @@ def run_subforest_selection(
 
                 results.append({
                     "representation": "Topological Forest",
-                    "clustering": clustering_method,
+                    "selection_strategy": clustering_method,
                     "full_forest_size": int(n_trees),
                     "subforest_size": int(s),
-                    "acc": subforest_eval["metrics"]["accuracy"],
-                    "balanced_acc": subforest_eval["metrics"]["balanced_accuracy"],
-                    "macro_f1": subforest_eval["metrics"]["macro_f1"],
-                    "roc_auc": subforest_eval["metrics"].get("roc_auc", np.nan),
+                    **shared_metric_cols(subforest_eval),
+                    "silhouette_score": clustering_silhouette_score,
                     "agreement_with_full_forest": subforest_agreement,
                     "indices": sorted([int(i) for i in subforest_indices]),
                 })
@@ -706,7 +799,7 @@ def run_subforest_selection(
             start_time = time.time()
 
         ind_R = INDTreeRepresentation(
-            random_forest_trees, X_train, y_train, "direct", "output", seed
+            random_forest_trees, X_train, y_train, "direct", "model", seed
         )
 
         num_trees = len(random_forest_trees)
@@ -714,11 +807,12 @@ def run_subforest_selection(
             lambda i, j: ind_R.similarity(i, j),
             num_trees
         )
+        plot_and_save_mds(distance_matrix, oob_mccs_np, "INDTree", results_root, seed)
 
         for clustering_method in clustering_methods:
             for s in sizes:
-                subforest_indices = select_subforest_via_clustering(
-                    distance_matrix, int(s), clustering_method, seed
+                subforest_indices, clustering_silhouette_score = select_subforest_via_clustering(
+                    distance_matrix, int(s), clustering_method, seed, random_forest_trees, X_train=X_train, y_train=y_train, oob_indices_list=oob_indices_list, name=name, size=s, savepath=results_root+"/plots"
                 )
 
                 subforest_eval = evaluate_forest(
@@ -736,13 +830,11 @@ def run_subforest_selection(
 
                 results.append({
                     "representation": "INDTree",
-                    "clustering": clustering_method,
+                    "selection_strategy": clustering_method,
                     "full_forest_size": int(n_trees),
                     "subforest_size": int(s),
-                    "acc": subforest_eval["metrics"]["accuracy"],
-                    "balanced_acc": subforest_eval["metrics"]["balanced_accuracy"],
-                    "macro_f1": subforest_eval["metrics"]["macro_f1"],
-                    "roc_auc": subforest_eval["metrics"].get("roc_auc", np.nan),
+                    **shared_metric_cols(subforest_eval),
+                    "silhouette_score": clustering_silhouette_score,
                     "agreement_with_full_forest": subforest_agreement,
                     "indices": sorted([int(i) for i in subforest_indices]),
                 })
@@ -756,7 +848,6 @@ def run_subforest_selection(
 
 
 def _append_df_as_fold_block_csv(path, df, fold_idx):
-    """Append a dataframe to CSV; optionally prepend a `# Fold <idx>` marker."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     file_exists = os.path.exists(path)
@@ -772,7 +863,21 @@ def _append_df_as_fold_block_csv(path, df, fold_idx):
             df.to_csv(fh, index=False, header=False)
 
 def _append_jsonl(path, obj):
-    """Append one JSON object as a single line to a JSONL file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+def _append_df_csv(path, df: pd.DataFrame) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    file_exists = os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as fh:
+        df.to_csv(fh, index=False, header=not file_exists)
+
+
+def _strip_fold_suffix(dataset_name: str | None) -> str | None:
+    if dataset_name is None:
+        return None
+    # expected pattern: "..._fold{idx}"
+    if "_fold" in dataset_name:
+        return dataset_name[:dataset_name.rfind("_fold")]
+    return dataset_name
