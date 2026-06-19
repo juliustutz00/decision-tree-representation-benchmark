@@ -73,7 +73,7 @@ Notes:
 The following figure shows how a simple decision tree is converted into each respective representation.
 <img width="1002" height="1178" alt="image" src="https://github.com/user-attachments/assets/cab588d5-2b79-4e3f-a66d-8220eac6c427" />
 
-## Representation Benchmark
+## Perturbation Benchmark
 
 This benchmark evaluates how well different tree representations capture meaningful differences between decision trees. For each base tree, we compute a representation embedding and compare it to embeddings of systematically perturbed versions of the same tree. The resulting representation distances are then related to (i) changes in predictive performance and (ii) a shift in feature importance, to assess whether a representation is sensitive to relevant model changes.
 
