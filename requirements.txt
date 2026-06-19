@@ -16,6 +16,7 @@ seaborn
 torch
 zss
 numpy<2
+ucimlrepo
 
 # The following package versions are ensured to work when using Python 3.10 or Python 3.12 on Kali Linux (Python 3.11 does NOT work)
 # on a VM, openTSNE might not work; if so (e.g., it shows a zsh error), do python -m pip uninstall openTSNE -y && pip install --no-binary :all: openTSNE
@@ -35,3 +36,4 @@ numpy<2
 #torch==2.10.0
 #zss==1.2.0
 #numpy==1.26.4
+#ucimlrepo
