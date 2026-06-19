@@ -1,24 +1,21 @@
 import numpy as np
 import pandas as pd
+import json
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.cluster import AgglomerativeClustering
-from sklearn_extra.cluster import KMedoids
 from sklearn.metrics import (
     accuracy_score,
-    balanced_accuracy_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score, 
+    matthews_corrcoef,
+    average_precision_score,
+    precision_score,
+    recall_score,
 )
+from sklearn.preprocessing import label_binarize
 from scipy.stats import pearsonr, spearmanr
 
 
-"""
-Utility functions for random-forest training, evaluation, similarity conversion,
-and subforest selection.
-"""
-
 def train_own_random_forest(X_train, y_train, n_trees, print_progress, seed):
-    """Train bootstrap-sampled decision trees and return OOB bookkeeping."""
     random_forest_trees = []
     bootstrap_indices_list = []
     oob_indices_list = []
@@ -28,15 +25,20 @@ def train_own_random_forest(X_train, y_train, n_trees, print_progress, seed):
         )
         X_boot, y_boot = X_train[bootstrap_indices], y_train[bootstrap_indices]
         oob_indices = generate_unsampled_indices(X_train.shape[0], bootstrap_indices)
-        template_tree = DecisionTreeClassifier(max_depth=10, max_features="sqrt", random_state=seed)
+        X_oob, y_oob = X_train[oob_indices], y_train[oob_indices]
+        template_tree = DecisionTreeClassifier(max_depth=6, max_features="sqrt", random_state=seed)
         template_tree.fit(X_boot, y_boot)
+        if print_progress and False:
+            print(
+                "Performance of unperturbed tree on OOB data:",
+                template_tree.score(X_oob, y_oob),
+            )
         random_forest_trees.append(template_tree)
         bootstrap_indices_list.append(bootstrap_indices)
         oob_indices_list.append(oob_indices)
     return random_forest_trees, bootstrap_indices_list, oob_indices_list
 
 def get_combined_correlation(df, pearson_weight=0.5, spearman_weight=0.5):
-    """Compute pairwise representation correlation table across all `sim_` columns."""
     if pearson_weight + spearman_weight != 1:
         raise ValueError("(pearson_weight + spearman_weight) has to be equal to 1.")
     
@@ -67,12 +69,21 @@ def generate_unsampled_indices(n_samples, sample_indices):
     unsampled_indices = indices_range[unsampled_mask]
     return unsampled_indices
 
-def evaluate_forest(X_test, y_test, trees, n_instances_test, n_classes): 
-    """
-    Evaluate an ensemble by majority vote + averaged probabilities.
+def _safe_predict_proba(tree, X, n_classes):
+    probas = tree.predict_proba(X)
+    
+    if probas.shape[1] == n_classes:
+        return probas
+    
+    full_probas = np.zeros((X.shape[0], n_classes), dtype=probas.dtype)
+    
+    for k, class_label in enumerate(tree.classes_):
+        if class_label < n_classes:
+            full_probas[:, int(class_label)] = probas[:, k]
+            
+    return full_probas
 
-    Returns hard predictions, probabilities, and standard classification metrics.
-    """
+def evaluate_forest(X_test, y_test, trees, n_instances_test, n_classes): 
     all_preds = np.vstack([t.predict(X_test) for t in trees])
     hard_preds = np.zeros(n_instances_test, dtype=int)
 
@@ -80,17 +91,16 @@ def evaluate_forest(X_test, y_test, trees, n_instances_test, n_classes):
         counts = np.bincount(all_preds[:, i].astype(int), minlength=n_classes)
         hard_preds[i] = counts.argmax()
 
-    probas = np.mean(
-        [t.predict_proba(X_test) for t in trees],
-        axis=0
-    )
+    probas_list = [_safe_predict_proba(t, X_test, n_classes) for t in trees]
+    probas = np.mean(probas_list, axis=0)
 
     metrics = {
         "accuracy": accuracy_score(y_test, hard_preds),
-        "balanced_accuracy": balanced_accuracy_score(y_test, hard_preds),
         "macro_f1": f1_score(y_test, hard_preds, average="macro"),
+        "mcc": matthews_corrcoef(y_test, hard_preds),
     }
 
+    # ROC AUC
     try:
         if n_classes == 2:
             metrics["roc_auc"] = roc_auc_score(y_test, probas[:, 1])
@@ -99,19 +109,98 @@ def evaluate_forest(X_test, y_test, trees, n_instances_test, n_classes):
                 y_test, probas, multi_class="ovr"
             )
     except ValueError:
-        metrics["roc_auc"] = np.nan
+        if n_classes == 2:
+            metrics["roc_auc"] = np.nan
+        else:
+            metrics["roc_auc_ovr"] = np.nan
+
+    # PR AUC
+    try:
+        if n_classes == 2:
+            metrics["pr_auc"] = average_precision_score(y_test, probas[:, 1])
+        else:
+            y_test_bin = label_binarize(y_test, classes=np.arange(n_classes))
+            metrics["pr_auc_ovr"] = average_precision_score(
+                y_test_bin, probas, average="macro"
+            )
+    except ValueError:
+        if n_classes == 2:
+            metrics["pr_auc"] = np.nan
+        else:
+            metrics["pr_auc_ovr"] = np.nan
+
+    # minority class metrics (one-vs-rest)
+    y_test_int = np.asarray(y_test).astype(int)
+    class_counts = np.bincount(y_test_int, minlength=n_classes)
+    present_classes = np.where(class_counts > 0)[0]
+
+    if present_classes.size > 0:
+        minority_class = int(present_classes[np.argmin(class_counts[present_classes])])
+        metrics["minority_class"] = minority_class
+        metrics["minority_support"] = int(class_counts[minority_class])
+
+        metrics["minority_precision"] = float(
+            precision_score(
+                y_test_int,
+                hard_preds,
+                labels=[minority_class],
+                average=None,
+                zero_division=0
+            )[0]
+        )
+        metrics["minority_recall"] = float(
+            recall_score(
+                y_test_int,
+                hard_preds,
+                labels=[minority_class],
+                average=None,
+                zero_division=0
+            )[0]
+        )
+        metrics["minority_f1"] = float(
+            f1_score(
+                y_test_int,
+                hard_preds,
+                labels=[minority_class],
+                average=None,
+                zero_division=0
+            )[0]
+        )
+    else:
+        metrics["minority_class"] = np.nan
+        metrics["minority_support"] = np.nan
+        metrics["minority_precision"] = np.nan
+        metrics["minority_recall"] = np.nan
+        metrics["minority_f1"] = np.nan
+
+    # feature importances
+    n_features = X_test.shape[1]
+    importances = []
+    for t in trees:
+        if hasattr(t, "feature_importances_"):
+            fi = np.asarray(t.feature_importances_, dtype=float)
+            if fi.shape[0] != n_features:
+                fi = np.pad(fi, (0, max(0, n_features - fi.shape[0])), mode="constant")
+            importances.append(fi[:n_features])
+        else:
+            importances.append(np.zeros(n_features, dtype=float))
+
+    if len(importances) > 0:
+        feature_importances = np.mean(importances, axis=0)
+    else:
+        feature_importances = np.zeros(n_features, dtype=float)
 
     return {
         "hard_predictions": hard_preds,
         "probabilities": probas,
         "metrics": metrics,
+        "feature_importances": feature_importances
     }
 
 def prediction_agreement(preds_a, preds_b):
     return np.mean(preds_a == preds_b)
 
 def similarity_to_distance_matrix(similarity_fn, n):
-    """Build symmetric distance matrix by min-max normalizing pairwise similarity."""
     similarity_matrix = np.zeros((n, n), dtype=float)
     for i in range(n):
         for j in range(i, n):
@@ -124,62 +213,7 @@ def similarity_to_distance_matrix(similarity_fn, n):
     np.fill_diagonal(distance_matrix, 0.0)
     return distance_matrix
 
-def select_subforest_via_clustering(distance_matrix, subforest_size, clustering_method, seed):
-    """Select representative tree indices via k-medoids, agglomerative, or density."""
-    if clustering_method == "k-medoid":
-        kmed_clustering = KMedoids(
-            n_clusters=subforest_size, metric="precomputed", random_state=seed
-        )
-        kmed_clustering.fit(distance_matrix)
-        subforest_indices = [int(x) for x in kmed_clustering.medoid_indices_]
-    elif clustering_method == "agglomerative":
-        agglomerative_clustering = AgglomerativeClustering(
-            n_clusters=subforest_size, metric="precomputed", linkage="average"
-        )
-        labels = agglomerative_clustering.fit_predict(distance_matrix)
-        subforest_indices = []
-        for cluster_id in range(subforest_size):
-            cluster_indices = np.where(labels == cluster_id)[0]
-            if cluster_indices.size == 0:
-                continue
-            cluster_distances = distance_matrix[
-                np.ix_(cluster_indices, cluster_indices)
-            ]
-            medoid_index_within_cluster = cluster_indices[
-                int(np.argmin(cluster_distances.sum(axis=1)))
-            ]
-            subforest_indices.append(medoid_index_within_cluster)
-    elif clustering_method == "density":
-        subforest_indices = select_subforest_via_density(distance_matrix, subforest_size, seed, 1.0, 1.5)
-    else:
-        raise ValueError(f"Unknown clustering method: {clustering_method}")
-    
-    return subforest_indices
-
-def select_subforest_via_density(distance_matrix, subforest_size, seed, sigma=1.0, alpha=1.5):
-    # future work: try to compute density using parzen windows
-    np.random.seed(seed)
-    n_trees = distance_matrix.shape[0]
-    densities = np.exp(-distance_matrix**2 / (2 * sigma**2)).sum(axis=1)
-    probabilities = densities / densities.sum()
-    remaining = set(range(n_trees))
-    
-    selected = []
-    for _ in range(subforest_size):
-        probs = np.array([probabilities[i] for i in remaining])
-        probs = probs / probs.sum()
-        
-        chosen = np.random.choice(list(remaining), p=probs)
-        selected.append(chosen)
-        remaining.remove(chosen)
-        
-        for i in remaining:
-            probabilities[i] *= distance_matrix[i, chosen]**alpha
-    
-    return selected
-
 def compute_similarity_to_base_tree(similarity_fn, len_tree_representations, len_perturbations, len_intensities, len_strengths, len_perturbation_runs):
-    """Map perturbed-tree indices to similarity against their corresponding base tree."""
     similarity_values = []
     perturbation_offset = len_perturbations * len_intensities * len_strengths * len_perturbation_runs + 1
     for idx in range(len_tree_representations):
@@ -191,9 +225,40 @@ def compute_similarity_to_base_tree(similarity_fn, len_tree_representations, len
             )
     return similarity_values
 
-
 def __combined_pearson_spearman_corr(col1, col2, pearson_weight, spearman_weight):
     pearson_corr, _ = pearsonr(col1, col2)
     spearman_corr, _ = spearmanr(col1, col2)
     combined_corr = (pearson_corr * pearson_weight) + (spearman_corr * spearman_weight)
     return pearson_corr, spearman_corr, combined_corr
+
+def tree_metric_score(tree, X, y, metric="accuracy", average="macro"):
+    if X is None or y is None or len(y) == 0:
+        return np.nan
+
+    y_pred = tree.predict(X)
+
+    if metric == "accuracy":
+        return float(np.mean(y_pred == y))
+    if metric == "f1":
+        return float(f1_score(y, y_pred, average=average, zero_division=0))
+    if metric == "mcc":
+        return float(matthews_corrcoef(y, y_pred))
+
+    raise ValueError(f"Unsupported tree metric: {metric}")
+
+
+def shared_metric_cols(eval_result):
+        m = eval_result["metrics"]
+        return {
+            "acc": m.get("accuracy", np.nan),
+            "macro_f1": m.get("macro_f1", np.nan),
+            "mcc": m.get("mcc", np.nan),
+            "roc_auc": m.get("roc_auc", m.get("roc_auc_ovr", np.nan)),
+            "pr_auc": m.get("pr_auc", m.get("pr_auc_ovr", np.nan)),
+            "minority_class": m.get("minority_class", np.nan),
+            "minority_support": m.get("minority_support", np.nan),
+            "minority_precision": m.get("minority_precision", np.nan),
+            "minority_recall": m.get("minority_recall", np.nan),
+            "minority_f1": m.get("minority_f1", np.nan),
+            "feature_importances": json.dumps([float(f"{x:.10f}") for x in np.asarray(eval_result.get("feature_importances", np.array([])))])
+        }
