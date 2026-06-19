@@ -26,7 +26,7 @@ defaults:
   perturbation_runs: 1                                                    # [1, +inf)
   random_forest_size: 300                                                 # [1, +inf)
   subforest_size: [5, 10, 15, 20]                                         # [1, random_forest_size)
-  clustering: ["k-medoid", "agglomerative", "density"]                    # ["k-medoid", "agglomerative", "density"]
+  clustering: ["k-medoid", "k-medoid-performance", "agglomerative", "agglomerative-performance", "density", "combination-greedy", "combination-simulated_annealing", "combination-genetic"]
 
 runs:
   - representation_benchmark: true
