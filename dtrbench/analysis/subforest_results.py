@@ -332,6 +332,8 @@ def plot_mcc_boxplots(
             medianprops=dict(color="black", linewidth=2),
         )
 
+        # Advanced — show individual points
+        '''
         sns.stripplot(
             data=df,
             x=x,
@@ -344,6 +346,7 @@ def plot_mcc_boxplots(
             ax=ax,
             zorder=2,
         )
+        '''
 
         for patch in ax.patches:
             patch.set_alpha(0.85)
@@ -369,8 +372,10 @@ def plot_mcc_boxplots(
             label="Single DT",
         )
 
-        ymin = df["fold_mean"].min() - 0.02
-        ymax = max(df["fold_mean"].max(), full_forest_mcc, single_DT_mcc) + 0.02
+        q_low = df["fold_mean"].quantile(0.02)
+        q_high = df["fold_mean"].quantile(0.98)
+        ymin = min(q_low, full_forest_mcc, single_DT_mcc) - 0.02
+        ymax = max(q_high, full_forest_mcc, single_DT_mcc) + 0.02
         ax.set_ylim(ymin, ymax)
         ax.set_title(title)
         ax.set_xlabel("")
@@ -1860,6 +1865,11 @@ def _normalize_to_full_forest(shared_values, metric="MCC"):
             lambda row: ff_lookup[(row["Dataset"], row["Fold"], row["Seed"])],
             axis=1,
         )
+        valid = full_metric.notna() & np.isfinite(full_metric) & (full_metric != 0)
+        df = df.loc[valid].copy()
+        full_metric = full_metric.loc[valid]
         df[metric] = df[metric] / full_metric
+        df = df[np.isfinite(df[metric])].copy()
+        normalized[key] = df
     normalized["ff"][metric] = 1.0
     return normalized
