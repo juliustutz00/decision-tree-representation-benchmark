@@ -13,7 +13,7 @@ import seaborn as sns
 from scipy.stats import pearsonr
 
 
-def read_perturbation_benchmark_results(results_path, REP_NAMES):
+def read_perturbation_benchmark_results(results_path, REP_NAMES, PERTURBATIONS):
     """Read the perturbation benchmark results from a CSV file and preprocess the data.
 
     Args:
@@ -27,6 +27,8 @@ def read_perturbation_benchmark_results(results_path, REP_NAMES):
 
     pert_df = pd.read_csv(results_path, header=0)
     pert_df["dataset"] = pert_df["dataset"].ffill()
+
+    pert_df = pert_df[pert_df["perturbation"].isin(PERTURBATIONS)].copy()
 
     num_cols = [
         "intensity",
