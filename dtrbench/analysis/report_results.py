@@ -118,7 +118,7 @@ def report(config_path):
 
     if perturbation_benchmark_results_path is not None:
         perturbation_data = read_perturbation_benchmark_results(
-            perturbation_benchmark_results_path, rep_names
+            perturbation_benchmark_results_path, rep_names, perturbations
         )
         if rep_similarity_vs_performance_feature_importance:
             plot_rep_similarity_vs_performance_feature_importance(
