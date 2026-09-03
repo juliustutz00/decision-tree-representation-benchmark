@@ -440,60 +440,85 @@ def plot_mcc_boxplots(
 def plot_mcc_representation_selection_strategy(
     shared_values, output_dir, REP_NAMES, SEL_STRATEGIES, show_recovery
 ):
-    """Plot a heatmap showing the mean MCC for each combination of representation and selection strategy.
+    """Plot a heatmap showing mean MCC for representation × selection strategy,
+    with baseline methods displayed as columns on the right.
 
     Aggregation:
-        Each heatmap cell shows the mean MCC of a representation–selection strategy
-        combination, averaged across folds, datasets, and subforest sizes.
+        Representation × selection strategy:
+            averaged across folds, datasets, and subforest sizes.
 
-    Args:
-        shared_values (dict): Dictionary containing processed dataframes for different categories.
-        output_dir (str): Directory where the plots will be saved.
-        REP_NAMES (list[str]): List of representation names to be considered.
-        SEL_STRATEGIES (list[str]): List of selection strategies to be considered.
+        Baselines:
+            averaged across datasets, then across the corresponding baseline
+            entries, and displayed as separate columns.
     """
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
 
     shared_values["bl"] = _average_random_baseline(shared_values["bl"])
+
     if show_recovery:
         shared_values = _normalize_to_full_forest(shared_values, "MCC")
 
+    # Representation × selection strategy
     _heatmap_base = (
         shared_values["rep"]
-        .groupby(["Representation", "Selection Strategy", "Dataset", "Subforest Size"])[
-            "MCC"
-        ]
+        .groupby(
+            [
+                "Representation",
+                "Selection Strategy",
+                "Dataset",
+                "Subforest Size",
+            ]
+        )["MCC"]
         .agg(fold_mean="mean", fold_std="std")
         .reset_index()
     )
+
     _heatmap_agg = (
-        _heatmap_base.groupby(["Representation", "Selection Strategy"])
-        .agg(final_mean=("fold_mean", "mean"), final_std=("fold_std", "mean"))
+        _heatmap_base
+        .groupby(["Representation", "Selection Strategy"])
+        .agg(
+            final_mean=("fold_mean", "mean"),
+            final_std=("fold_std", "mean"),
+        )
         .reset_index()
     )
 
+    # Baselines
     _fixed = pd.concat(
-        [shared_values["bl"], shared_values["ff"], shared_values["dt"]],
-        ignore_index=True,
-    )
-    _fixed = _fixed.groupby(["Representation", "Dataset"])["MCC"].mean().reset_index()
-    _fixed = (
-        _fixed.groupby("Representation")["MCC"].mean().reset_index(name="final_mean")
-    )
-    strategy_df = pd.DataFrame({"Selection Strategy": SEL_STRATEGIES})
-    _fixed_expanded = (
-        _fixed.assign(key=1)
-        .merge(strategy_df.assign(key=1), on="key")
-        .drop(columns="key")
-    )
-    heatmap_df = pd.concat(
         [
-            _heatmap_agg[["Representation", "Selection Strategy", "final_mean"]],
-            _fixed_expanded[["Representation", "Selection Strategy", "final_mean"]],
+            shared_values["bl"],
+            shared_values["ff"],
+            shared_values["dt"],
         ],
         ignore_index=True,
     )
 
+    _fixed = (
+        _fixed
+        .groupby(["Representation", "Dataset"])["MCC"]
+        .mean()
+        .reset_index()
+    )
+
+    _baseline_values = (
+        _fixed
+        .groupby("Representation")["MCC"]
+        .mean()
+    )
+
+    baseline_order = [
+        "Full Forest",
+        "Top OOB MCC",
+        "Top OOB ACC",
+        "Random",
+        "Single DT",
+    ]
+
+    baseline_values = _baseline_values.reindex(
+        [b for b in baseline_order if b in _baseline_values.index]
+    )
+
+    # Selection strategy names
     _strat_rename = {
         "agglomerative-performance": "agp",
         "agglomerative": "ag",
@@ -505,96 +530,232 @@ def plot_mcc_representation_selection_strategy(
         "k-medoid": "km",
     }
 
-    _pivot_mcc = heatmap_df.pivot(
-        index="Representation", columns="Selection Strategy", values="final_mean"
+    _pivot_mcc = _heatmap_agg.pivot(
+        index="Representation",
+        columns="Selection Strategy",
+        values="final_mean",
     )
-    _pivot_mcc.columns = [_strat_rename.get(c, c) for c in _pivot_mcc.columns]
-    strategy_order = [_strat_rename.get(s, s) for s in SEL_STRATEGIES]
+
+    _pivot_mcc.columns = [
+        _strat_rename.get(c, c)
+        for c in _pivot_mcc.columns
+    ]
+
+    strategy_order = [
+        _strat_rename.get(s, s)
+        for s in SEL_STRATEGIES
+    ]
+
     _pivot_mcc = _pivot_mcc.reindex(columns=strategy_order)
+
+    # Representation names
+    def _short_representation_name(r):
+        return (
+            r.replace("Tree Descriptor", "TD")
+            .replace("Leaf Profile", "LP")
+            .replace("Feature Graph", "FG")
+            .replace("Topological Forest", "TF")
+            .replace("INDTree", "ID")
+        )
+
     _pivot_mcc.index = [
-        r.replace("Tree Descriptor", "TD")
-        .replace("Leaf Profile", "LP")
-        .replace("Feature Graph", "FG")
-        .replace("Topological Forest", "TF")
-        .replace("INDTree", "ID")
+        _short_representation_name(r)
         for r in _pivot_mcc.index
     ]
+
     representation_order = [
-        r.replace("Tree Descriptor", "TD")
-        .replace("Leaf Profile", "LP")
-        .replace("Feature Graph", "FG")
-        .replace("Topological Forest", "TF")
-        .replace("INDTree", "ID")
+        _short_representation_name(r)
         for r in REP_NAMES
     ]
-    final_order = (
-        ["Full Forest"]
-        + representation_order
-        + ["Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
-    )
-    _pivot_mcc = _pivot_mcc.reindex([r for r in final_order if r in _pivot_mcc.index])
 
-    fig_heatmap_mcc, ax_hm = plt.subplots(figsize=(10, 3.8))
+    _pivot_mcc = _pivot_mcc.reindex(
+        [r for r in representation_order if r in _pivot_mcc.index]
+    )
+
+    # Plot
+    n_strategy_cols = len(_pivot_mcc.columns)
+    n_baseline_cols = len(baseline_values)
+    n_rows = len(_pivot_mcc.index)
+
+    fig_heatmap_mcc, ax_hm = plt.subplots(
+        figsize=(6, 3)
+    )
+
+    all_values = pd.concat(
+        [
+            _pivot_mcc.stack(),
+            baseline_values,
+        ]
+    ).dropna()
+
+    vmin = all_values.min()
+    vmax = all_values.max()
+
+    norm = plt.Normalize(
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    cmap = plt.get_cmap("YlGnBu")
+
     sns.heatmap(
         _pivot_mcc,
         ax=ax_hm,
-        cmap="YlGnBu",
+        cmap=cmap,
+        norm=norm,
         annot=True,
         fmt=".3f",
-        annot_kws={"size": 8},
+        annot_kws={"size": 6},
         linewidths=0.4,
         linecolor="white",
-        cbar_kws={
-            "label": "MCC Recovery of Full Forest" if show_recovery else "Mean MCC"
-        },
+        cbar_kws={},
     )
+    cbar = ax_hm.collections[0].colorbar
+    cbar.set_label(
+        "MCC Recovery of Full Forest"
+        if show_recovery
+        else "Mean MCC",
+        fontsize=7,
+    )
+    cbar.ax.tick_params(labelsize=7)
 
-    baseline_rows = ["Full Forest", "Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
-    ncols = _pivot_mcc.shape[1]
-    mesh = ax_hm.collections[0]
-    cmap = mesh.cmap
-    norm = mesh.norm
-    for row_name in baseline_rows:
-        if row_name not in _pivot_mcc.index:
-            continue
-        y = _pivot_mcc.index.get_loc(row_name)
-        val = _pivot_mcc.loc[row_name].iloc[0]
+    # Baseline blocks
+    for i, (baseline_name, baseline_value) in enumerate(
+        baseline_values.items()
+    ):
+        x = n_strategy_cols + i
+
+        cell_color = cmap(norm(baseline_value))
+
         rect = plt.Rectangle(
-            (0, y),
-            ncols,
+            (x, 0),
             1,
-            facecolor=cmap(norm(val)),
-            edgecolor="white",
-            linewidth=0.4,
-            zorder=3,
+            n_rows,
+            facecolor=cell_color,
+            edgecolor="none",
+            linewidth=0,
+            zorder=2,
         )
+
         ax_hm.add_patch(rect)
-        r, g, b, _ = cmap(norm(val))
-        text_color = "white" if (0.299 * r + 0.587 * g + 0.114 * b) < 0.5 else "black"
+
+        r, g, b, _ = cell_color
+
+        luminance = (
+            0.2126 * r
+            + 0.7152 * g
+            + 0.0722 * b
+        )
+
+        text_color = "white" if luminance < 0.5 else "black"
+
         ax_hm.text(
-            ncols / 2,
-            y + 0.5,
-            f"{val:.3f}",
+            x + 0.5,
+            n_rows / 2,
+            f"{baseline_value:.3f}",
             ha="center",
             va="center",
-            fontsize=8,
+            fontsize=6,
             color=text_color,
-            zorder=4,
+            zorder=3,
         )
-        ax_hm.set_title(
-            "Representation × Selection Strategy — "
-            + ("Recovery" if show_recovery else "Mean MCC")
-        )
-        ax_hm.set_xlabel("Selection Strategy")
-        ax_hm.set_ylabel("Representation")
-        ax_hm.tick_params(axis="x", rotation=40)
-        ax_hm.tick_params(axis="y", rotation=0)
+
+    ax_hm.set_xlim(
+        0,
+        n_strategy_cols + n_baseline_cols,
+    )
+
+    ax_hm.set_xticks(
+        [
+            *[
+                i + 0.5
+                for i in range(n_strategy_cols)
+            ],
+            *[
+                n_strategy_cols + i + 0.5
+                for i in range(n_baseline_cols)
+            ],
+        ]
+    )
+
+    ax_hm.set_xticklabels(
+        [
+            *_pivot_mcc.columns.tolist(),
+            *baseline_values.index.tolist(),
+        ]
+    )
+
+    # Separator
+    ax_hm.axvline(
+        n_strategy_cols,
+        color="black",
+        linewidth=1.5,
+        zorder=10,
+    )
+
+    ax_hm.set_title(
+        "Representation × Selection Strategy — "
+        + ("Recovery" if show_recovery else "Mean MCC")
+    )
+
+    ax_hm.set_ylabel("Representation", fontsize=10)
+    ax_hm.set_xlabel("")
+
+    ax_hm.tick_params(
+        axis="x",
+        rotation=35,
+        labelsize=7
+    )
+
+    ax_hm.tick_params(
+        axis="y",
+        rotation=0,
+        labelsize=7
+    )
+
+    # Group labels
+    n_total_cols = n_strategy_cols + n_baseline_cols
+
+    strategy_center = (
+        n_strategy_cols / 2
+    ) / n_total_cols
+
+    baseline_center = (
+        n_strategy_cols + n_baseline_cols / 2
+    ) / n_total_cols
+
+    ax_hm.text(
+        strategy_center,
+        -0.5,
+        "Selection Strategies",
+        transform=ax_hm.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
+
+    ax_hm.text(
+        baseline_center,
+        -0.5,
+        "Baselines",
+        transform=ax_hm.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
 
     suffix = "_recovery" if show_recovery else ""
+
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/heatmap_mcc{suffix}.png", dpi=600)
+    plt.savefig(
+        f"{output_dir}/heatmap_mcc{suffix}.png",
+        dpi=600,
+        bbox_inches="tight",
+    )
+
     print(
-        "Subforest Selection: Heatmap of mean MCC (Representation × Selection Strategy) - done."
+        "Subforest Selection: Heatmap of mean MCC "
+        "(Representation × Selection Strategy + Baselines) - done."
     )
     print()
 
@@ -621,72 +782,132 @@ def plot_std_representation_selection_strategy(
 
     _heatmap_base = (
         shared_values["rep"]
-        .groupby(["Representation", "Selection Strategy", "Dataset", "Subforest Size"])[
-            "MCC"
-        ]
+        .groupby(
+            [
+                "Representation",
+                "Selection Strategy",
+                "Dataset",
+                "Subforest Size",
+            ]
+        )["MCC"]
         .agg(fold_mean="mean", fold_std="std")
         .reset_index()
     )
+
     _heatmap_agg = (
-        _heatmap_base.groupby(["Representation", "Selection Strategy", "Dataset"])
-        .agg(final_mean=("fold_mean", "mean"), final_std=("fold_std", "mean"))
+        _heatmap_base
+        .groupby(["Representation", "Selection Strategy", "Dataset"])
+        .agg(
+            final_mean=("fold_mean", "mean"),
+            final_std=("fold_std", "mean"),
+        )
         .reset_index()
     )
 
     _fixed = pd.concat(
-        [shared_values["bl"], shared_values["ff"], shared_values["dt"]],
+        [
+            shared_values["bl"],
+            shared_values["ff"],
+            shared_values["dt"],
+        ],
         ignore_index=True,
     )
+
     _fixed = (
-        _fixed.groupby(["Representation", "Dataset", "Fold", "Subforest Size"])["MCC"]
+        _fixed
+        .groupby(
+            [
+                "Representation",
+                "Dataset",
+                "Fold",
+                "Subforest Size",
+            ]
+        )["MCC"]
         .mean()
         .reset_index()
     )
+
     _fixed = (
-        _fixed.groupby(["Representation", "Dataset"])["MCC"]
+        _fixed
+        .groupby(["Representation", "Dataset"])["MCC"]
         .std()
         .reset_index(name="fold_std")
     )
+
     _fixed = (
-        _fixed.groupby(["Representation", "Dataset"])["fold_std"]
+        _fixed
+        .groupby(["Representation", "Dataset"])["fold_std"]
         .mean()
         .reset_index(name="final_std")
     )
-    strategy_df = pd.DataFrame({"Selection Strategy": SEL_STRATEGIES})
+
+    strategy_df = pd.DataFrame(
+        {"Selection Strategy": SEL_STRATEGIES}
+    )
+
     _fixed_expanded = (
         _fixed.assign(key=1)
-        .merge(strategy_df.assign(key=1), on="key")
+        .merge(
+            strategy_df.assign(key=1),
+            on="key",
+        )
         .drop(columns="key")
     )
 
     heatmap_df = pd.concat(
         [
             _heatmap_agg[
-                ["Representation", "Selection Strategy", "Dataset", "final_std"]
+                [
+                    "Representation",
+                    "Selection Strategy",
+                    "Dataset",
+                    "final_std",
+                ]
             ],
             _fixed_expanded[
-                ["Representation", "Selection Strategy", "Dataset", "final_std"]
+                [
+                    "Representation",
+                    "Selection Strategy",
+                    "Dataset",
+                    "final_std",
+                ]
             ],
         ],
         ignore_index=True,
     )
 
     if show_recovery:
-        full_forest_std = heatmap_df[heatmap_df["Representation"] == "Full Forest"][
+        full_forest_std = heatmap_df[
+            heatmap_df["Representation"] == "Full Forest"
+        ][
             ["Dataset", "final_std"]
-        ].rename(columns={"final_std": "full_forest_std"})
+        ].rename(
+            columns={"final_std": "full_forest_std"}
+        )
+
         heatmap_df = heatmap_df.merge(
             full_forest_std,
             on="Dataset",
             how="left",
         )
+
         heatmap_df["final_std"] = (
-            heatmap_df["final_std"] / heatmap_df["full_forest_std"]
+            heatmap_df["final_std"]
+            / heatmap_df["full_forest_std"]
         )
-        heatmap_df = heatmap_df.drop(columns="full_forest_std")
+
+        heatmap_df = heatmap_df.drop(
+            columns="full_forest_std"
+        )
 
     heatmap_df = (
-        heatmap_df.groupby(["Representation", "Selection Strategy"])["final_std"]
+        heatmap_df
+        .groupby(
+            [
+                "Representation",
+                "Selection Strategy",
+            ]
+        )["final_std"]
         .mean()
         .reset_index()
     )
@@ -703,11 +924,25 @@ def plot_std_representation_selection_strategy(
     }
 
     _pivot_std = heatmap_df.pivot(
-        index="Representation", columns="Selection Strategy", values="final_std"
+        index="Representation",
+        columns="Selection Strategy",
+        values="final_std",
     )
-    _pivot_std.columns = [_strat_rename.get(c, c) for c in _pivot_std.columns]
-    strategy_order = [_strat_rename.get(s, s) for s in SEL_STRATEGIES]
-    _pivot_std = _pivot_std.reindex(columns=strategy_order)
+
+    _pivot_std.columns = [
+        _strat_rename.get(c, c)
+        for c in _pivot_std.columns
+    ]
+
+    strategy_order = [
+        _strat_rename.get(s, s)
+        for s in SEL_STRATEGIES
+    ]
+
+    _pivot_std = _pivot_std.reindex(
+        columns=strategy_order
+    )
+
     _pivot_std.index = [
         r.replace("Leaf Profile", "LP")
         .replace("Tree Descriptor", "TD")
@@ -716,6 +951,7 @@ def plot_std_representation_selection_strategy(
         .replace("INDTree", "ID")
         for r in _pivot_std.index
     ]
+
     representation_order = [
         r.replace("Tree Descriptor", "TD")
         .replace("Leaf Profile", "LP")
@@ -724,86 +960,227 @@ def plot_std_representation_selection_strategy(
         .replace("INDTree", "ID")
         for r in REP_NAMES
     ]
-    final_order = (
-        ["Full Forest"]
-        + representation_order
-        + ["Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
-    )
-    _pivot_std = _pivot_std.reindex([r for r in final_order if r in _pivot_std.index])
 
-    fig_heatmap_std, ax_hs = plt.subplots(figsize=(10, 3.8))
+    _pivot_std = _pivot_std.reindex(
+        [
+            r
+            for r in representation_order
+            if r in _pivot_std.index
+        ]
+    )
+
+    baseline_rows = [
+        "Full Forest",
+        "Top OOB MCC",
+        "Top OOB ACC",
+        "Random",
+        "Single DT",
+    ]
+
+    baseline_values = heatmap_df[
+        heatmap_df["Representation"].isin(baseline_rows)
+    ].groupby("Representation")["final_std"].mean()
+
+    baseline_values = baseline_values.reindex(
+        [
+            b
+            for b in baseline_rows
+            if b in baseline_values.index
+        ]
+    )
+
+    fig_heatmap_std, ax_hs = plt.subplots(
+        figsize=(6, 3)
+    )
+
+    all_values = pd.concat(
+        [
+            _pivot_std.stack(),
+            baseline_values,
+        ]
+    ).dropna()
+
+    vmin = all_values.min()
+    vmax = all_values.max()
+
+    norm = plt.Normalize(
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    cmap = plt.get_cmap("OrRd")
+
     sns.heatmap(
         _pivot_std,
         ax=ax_hs,
-        cmap="OrRd",
+        cmap=cmap,
+        norm=norm,
         annot=True,
         fmt=".3f",
-        annot_kws={"size": 8},
+        annot_kws={"size": 6},
         linewidths=0.4,
         linecolor="white",
-        cbar_kws={
-            "label": "Std ratio to Full Forest" if show_recovery else "Std of MCC"
-        },
+        cbar_kws={},
     )
+    cbar = ax_hs.collections[0].colorbar
+    cbar.set_label(
+        "Std ratio to Full Forest"
+        if show_recovery
+        else "Std of MCC",
+        fontsize=7,
+    )
+    cbar.ax.tick_params(labelsize=7)
 
-    baseline_rows = ["Full Forest", "Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
-    ncols = _pivot_std.shape[1]
-    mesh = ax_hs.collections[0]
-    cmap = mesh.cmap
-    norm = mesh.norm
-    for row_name in baseline_rows:
-        if row_name not in _pivot_std.index:
-            continue
-        y = _pivot_std.index.get_loc(row_name)
-        val = _pivot_std.loc[row_name].iloc[0]
+    n_strategy_cols = len(_pivot_std.columns)
+    n_baseline_cols = len(baseline_values)
+    n_rows = len(_pivot_std.index)
+
+    for i, (baseline_name, baseline_value) in enumerate(
+        baseline_values.items()
+    ):
+        x = n_strategy_cols + i
+
+        cell_color = cmap(norm(baseline_value))
+
         rect = plt.Rectangle(
-            (0, y),
-            ncols,
+            (x, 0),
             1,
-            facecolor=cmap(norm(val)),
-            edgecolor="white",
-            linewidth=0.4,
-            zorder=3,
+            n_rows,
+            facecolor=cell_color,
+            edgecolor="none",
+            linewidth=0,
+            zorder=2,
         )
+
         ax_hs.add_patch(rect)
-        r, g, b, _ = cmap(norm(val))
-        text_color = "white" if (0.299 * r + 0.587 * g + 0.114 * b) < 0.5 else "black"
+
+        r, g, b, _ = cell_color
+
+        luminance = (
+            0.2126 * r
+            + 0.7152 * g
+            + 0.0722 * b
+        )
+
+        text_color = (
+            "white"
+            if luminance < 0.5
+            else "black"
+        )
+
         ax_hs.text(
-            ncols / 2,
-            y + 0.5,
-            f"{val:.3f}",
+            x + 0.5,
+            n_rows / 2,
+            f"{baseline_value:.3f}",
             ha="center",
             va="center",
-            fontsize=8,
+            fontsize=6,
             color=text_color,
-            zorder=4,
+            zorder=3,
         )
-        ax_hs.set_title(
-            "Representation × Selection Strategy — "
-            + (
-                "Recovery Standard Deviation"
-                if show_recovery
-                else "MCC Standard Deviation"
-            )
-        )
-        ax_hs.set_xlabel("Selection Strategy")
-        ax_hs.set_ylabel("Representation")
-        ax_hs.tick_params(axis="x", rotation=40)
-        ax_hs.tick_params(axis="y", rotation=0)
+
+    ax_hs.set_xlim(
+        0,
+        n_strategy_cols + n_baseline_cols,
+    )
+
+    ax_hs.set_xticks(
+        [
+            *[
+                i + 0.5
+                for i in range(n_strategy_cols)
+            ],
+            *[
+                n_strategy_cols + i + 0.5
+                for i in range(n_baseline_cols)
+            ],
+        ]
+    )
+
+    ax_hs.set_xticklabels(
+        [
+            *_pivot_std.columns.tolist(),
+            *baseline_values.index.tolist(),
+        ]
+    )
+
+    ax_hs.axvline(
+        n_strategy_cols,
+        color="black",
+        linewidth=1.5,
+        zorder=10,
+    )
 
     ax_hs.set_title(
         "Representation × Selection Strategy — "
-        + ("Recovery Standard Deviation" if show_recovery else "MCC Standard Deviation")
+        + (
+            "Recovery Standard Deviation"
+            if show_recovery
+            else "MCC Standard Deviation"
+        )
     )
-    ax_hs.set_xlabel("Selection Strategy")
-    ax_hs.set_ylabel("Representation")
-    ax_hs.tick_params(axis="x", rotation=40)
-    ax_hs.tick_params(axis="y", rotation=0)
+
+    ax_hs.set_ylabel("Representation", fontsize=10)
+    ax_hs.set_xlabel("")
+
+    ax_hs.tick_params(
+        axis="x",
+        rotation=35,
+        labelsize=7,
+    )
+
+    ax_hs.tick_params(
+        axis="y",
+        rotation=0,
+        labelsize=7,
+    )
+
+    n_total_cols = (
+        n_strategy_cols + n_baseline_cols
+    )
+
+    strategy_center = (
+        n_strategy_cols / 2
+    ) / n_total_cols
+
+    baseline_center = (
+        n_strategy_cols
+        + n_baseline_cols / 2
+    ) / n_total_cols
+
+    ax_hs.text(
+        strategy_center,
+        -0.5,
+        "Selection Strategies",
+        transform=ax_hs.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
+
+    ax_hs.text(
+        baseline_center,
+        -0.5,
+        "Baselines",
+        transform=ax_hs.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    
+    )
+
     suffix = "_recovery" if show_recovery else ""
+
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/heatmap_std{suffix}.png", dpi=600)
+    plt.savefig(
+        f"{output_dir}/heatmap_std{suffix}.png",
+        dpi=600,
+        bbox_inches="tight",
+    )
+
     print(
-        "Subforest Selection: Heatmap of MCC standard deviation (Representation × Selection Strategy) - done."
+        "Subforest Selection: Heatmap of MCC standard deviation "
+        "(Representation × Selection Strategy + Baselines) - done."
     )
     print()
 
@@ -870,6 +1247,7 @@ def plot_kendalls_w_vs_config(
     }
 
     _kw_records = []
+
     # representations
     for (ds, rep, strat, k), grp in shared_values["rep"].groupby(
         ["Dataset", "Representation", "Selection Strategy", "Subforest Size"]
@@ -883,6 +1261,7 @@ def plot_kendalls_w_vs_config(
                 "Kendall_W": _kw,
             }
         )
+
     # baselines
     for (ds, rep, k), grp in shared_values["bl"].groupby(
         ["Dataset", "Representation", "Subforest Size"]
@@ -899,11 +1278,13 @@ def plot_kendalls_w_vs_config(
             )
 
     _kw_df = pd.DataFrame(_kw_records)
+
     _kw_cfg = (
         _kw_df.groupby(["Representation", "Selection Strategy"])["Kendall_W"]
         .mean()
         .reset_index()
     )
+
     _kw_cfg["Config"] = _kw_cfg.apply(
         lambda r: (
             {
@@ -922,11 +1303,18 @@ def plot_kendalls_w_vs_config(
                 "INDTree": "ID",
             }.get(r["Representation"], r["Representation"])
             + "+"
-            + _strat_rename.get(r["Selection Strategy"], r["Selection Strategy"])
+            + _strat_rename.get(
+                r["Selection Strategy"],
+                r["Selection Strategy"],
+            )
         ),
         axis=1,
     )
-    _kw_cfg = _kw_cfg.sort_values("Kendall_W", ascending=True).reset_index(drop=True)
+
+    _kw_cfg = _kw_cfg.sort_values(
+        "Kendall_W",
+        ascending=True,
+    ).reset_index(drop=True)
 
     # barplot
     # Color bars by Representation
@@ -940,23 +1328,47 @@ def plot_kendalls_w_vs_config(
         "Top OOB ACC": palette[7],
         "Random": palette[8],
     }
-    _bar_colors = [_rep_color_map[r] for r in _kw_cfg["Representation"]]
+
+    _bar_colors = [
+        _rep_color_map[r]
+        for r in _kw_cfg["Representation"]
+    ]
 
     # Reference line for full forest & single DT mean Kendall W
     _ff_fi = shared_values["ff"].copy()
-    _ff_fi["FI_arr"] = _ff_fi["Feature Importances"].apply(_safe_parse_fi)
+    _ff_fi["FI_arr"] = _ff_fi["Feature Importances"].apply(
+        _safe_parse_fi
+    )
+
     _ff_kw_vals = []
-    for (ds, k), grp in _ff_fi.groupby(["Dataset", "Subforest Size"]):
-        _ff_kw_vals.append(_kendall_w(grp["FI_arr"].tolist()))
+
+    for (ds, k), grp in _ff_fi.groupby(
+        ["Dataset", "Subforest Size"]
+    ):
+        _ff_kw_vals.append(
+            _kendall_w(grp["FI_arr"].tolist())
+        )
+
     _ff_kw_mean = np.nanmean(_ff_kw_vals)
+
     _dt_fi = shared_values["dt"].copy()
-    _dt_fi["FI_arr"] = _dt_fi["Feature Importances"].apply(_safe_parse_fi)
+    _dt_fi["FI_arr"] = _dt_fi["Feature Importances"].apply(
+        _safe_parse_fi
+    )
+
     _dt_kw_vals = []
-    for (ds, k), grp in _dt_fi.groupby(["Dataset", "Subforest Size"]):
-        _dt_kw_vals.append(_kendall_w(grp["FI_arr"].tolist()))
+
+    for (ds, k), grp in _dt_fi.groupby(
+        ["Dataset", "Subforest Size"]
+    ):
+        _dt_kw_vals.append(
+            _kendall_w(grp["FI_arr"].tolist())
+        )
+
     _dt_kw_mean = np.nanmean(_dt_kw_vals)
 
     fig_kendall, ax_kw = plt.subplots(figsize=(10, 13))
+
     ax_kw.barh(
         range(len(_kw_cfg)),
         _kw_cfg["Kendall_W"],
@@ -966,19 +1378,43 @@ def plot_kendalls_w_vs_config(
     )
 
     ax_kw.set_yticks(range(len(_kw_cfg)))
-    ax_kw.set_yticklabels(_kw_cfg["Config"], fontsize=9)
+    ax_kw.set_yticklabels(
+        _kw_cfg["Config"],
+        fontsize=9,
+    )
 
     ax_kw.set_xlabel("Kendall's $W$")
-    ax_kw.set_ylabel("Configuration (Representation + Selection Strategy)")
+    ax_kw.set_ylabel(
+        "Configuration (Representation + Selection Strategy)"
+    )
+
     ax_kw.set_title(
         "Feature Importance Stability (Kendall's $W$) per Configuration — averaged across datasets, folds, subforest sizes"
     )
 
-    ax_kw.set_ylim(-0.5, len(_kw_cfg) - 0.5)
-    xmin = min(_kw_cfg["Kendall_W"].min(), _ff_kw_mean, _dt_kw_mean)
-    xmax = max(_kw_cfg["Kendall_W"].max(), _ff_kw_mean, _dt_kw_mean)
+    ax_kw.set_ylim(
+        -0.5,
+        len(_kw_cfg) - 0.5,
+    )
+
+    xmin = min(
+        _kw_cfg["Kendall_W"].min(),
+        _ff_kw_mean,
+        _dt_kw_mean,
+    )
+
+    xmax = max(
+        _kw_cfg["Kendall_W"].max(),
+        _ff_kw_mean,
+        _dt_kw_mean,
+    )
+
     margin = 0.05 * (xmax - xmin)
-    ax_kw.set_xlim(xmin - margin, xmax + margin)
+
+    ax_kw.set_xlim(
+        xmin - margin,
+        xmax + margin,
+    )
 
     # Reference line for full forest
     ax_kw.axvline(
@@ -1001,8 +1437,10 @@ def plot_kendalls_w_vs_config(
     # Legend
     _legend_handles = [
         Patch(facecolor=_rep_color_map[r], label=r)
-        for r in REP_NAMES + ["Random", "Top OOB ACC", "Top OOB MCC"]
+        for r in REP_NAMES
+        + ["Random", "Top OOB ACC", "Top OOB MCC"]
     ]
+
     ax_kw.legend(
         handles=_legend_handles
         + [
@@ -1029,30 +1467,47 @@ def plot_kendalls_w_vs_config(
         ncol=2,
     )
 
-    sns.despine(ax=ax_kw, top=True, right=True)
+    sns.despine(
+        ax=ax_kw,
+        top=True,
+        right=True,
+    )
+
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/fig_kendall_configurations_barplot.png", dpi=600)
+
+    plt.savefig(
+        f"{output_dir}/fig_kendall_configurations_barplot.png",
+        dpi=600,
+    )
 
     # heatmap
     _fixed_kw = []
 
     # Full Forest
-    for (ds, k), grp in _ff_fi.groupby(["Dataset", "Subforest Size"]):
+    for (ds, k), grp in _ff_fi.groupby(
+        ["Dataset", "Subforest Size"]
+    ):
         _fixed_kw.append(
             {
                 "Representation": "Full Forest",
                 "Selection Strategy": "",
-                "Kendall_W": _kendall_w(grp["FI_arr"].tolist()),
+                "Kendall_W": _kendall_w(
+                    grp["FI_arr"].tolist()
+                ),
             }
         )
 
     # Single DT
-    for (ds, k), grp in _dt_fi.groupby(["Dataset", "Subforest Size"]):
+    for (ds, k), grp in _dt_fi.groupby(
+        ["Dataset", "Subforest Size"]
+    ):
         _fixed_kw.append(
             {
                 "Representation": "Single DT",
                 "Selection Strategy": "",
-                "Kendall_W": _kendall_w(grp["FI_arr"].tolist()),
+                "Kendall_W": _kendall_w(
+                    grp["FI_arr"].tolist()
+                ),
             }
         )
 
@@ -1064,20 +1519,32 @@ def plot_kendalls_w_vs_config(
             {
                 "Representation": rep,
                 "Selection Strategy": "",
-                "Kendall_W": _kendall_w(grp["FI_arr"].tolist()),
+                "Kendall_W": _kendall_w(
+                    grp["FI_arr"].tolist()
+                ),
             }
         )
 
     _fixed_kw = pd.DataFrame(_fixed_kw)
 
     # Average baseline values
-    _fixed_kw = _fixed_kw.groupby("Representation")["Kendall_W"].mean().reset_index()
+    _fixed_kw = (
+        _fixed_kw
+        .groupby("Representation")["Kendall_W"]
+        .mean()
+        .reset_index()
+    )
 
     # Expand baselines over strategies to create heatmap rows
     _fixed_expanded = (
         _fixed_kw.assign(key=1)
         .merge(
-            pd.DataFrame({"Selection Strategy": SEL_STRATEGIES, "key": 1}),
+            pd.DataFrame(
+                {
+                    "Selection Strategy": SEL_STRATEGIES,
+                    "key": 1,
+                }
+            ),
             on="key",
         )
         .drop(columns="key")
@@ -1085,7 +1552,13 @@ def plot_kendalls_w_vs_config(
 
     _heatmap_kw = pd.concat(
         [
-            _kw_cfg[["Representation", "Selection Strategy", "Kendall_W"]],
+            _kw_cfg[
+                [
+                    "Representation",
+                    "Selection Strategy",
+                    "Kendall_W",
+                ]
+            ],
             _fixed_expanded,
         ],
         ignore_index=True,
@@ -1098,11 +1571,20 @@ def plot_kendalls_w_vs_config(
     )
 
     _pivot_kw.columns = [
-        _strat_rename.get(c, c) if c != "" else c for c in _pivot_kw.columns
+        _strat_rename.get(c, c)
+        if c != ""
+        else c
+        for c in _pivot_kw.columns
     ]
 
-    strategy_order = [_strat_rename.get(s, s) for s in SEL_STRATEGIES]
-    _pivot_kw = _pivot_kw.reindex(columns=strategy_order)
+    strategy_order = [
+        _strat_rename.get(s, s)
+        for s in SEL_STRATEGIES
+    ]
+
+    _pivot_kw = _pivot_kw.reindex(
+        columns=strategy_order
+    )
 
     # Rename representations
     _pivot_kw.index = [
@@ -1129,70 +1611,221 @@ def plot_kendalls_w_vs_config(
         + ["Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
     )
 
-    _pivot_kw = _pivot_kw.reindex([r for r in final_order if r in _pivot_kw.index])
+    _pivot_kw = _pivot_kw.reindex(
+        [
+            r
+            for r in final_order
+            if r in _pivot_kw.index
+        ]
+    )
 
-    fig_kw_heatmap, ax_kw_hm = plt.subplots(figsize=(10, 3.8))
+    # Baseline values
+    baseline_rows = [
+        "Full Forest",
+        "Top OOB MCC",
+        "Top OOB ACC",
+        "Random",
+        "Single DT",
+    ]
+
+    _pivot_kw = _pivot_kw.drop(
+        index=baseline_rows,
+        errors="ignore",
+    )
+
+    baseline_values = _fixed_kw.set_index(
+        "Representation"
+    )["Kendall_W"]
+
+    baseline_values = baseline_values.reindex(
+        [
+            b
+            for b in baseline_rows
+            if b in baseline_values.index
+        ]
+    )
+
+    fig_kw_heatmap, ax_kw_hm = plt.subplots(
+        figsize=(6, 3)
+    )
+
+    all_values = pd.concat(
+        [
+            _pivot_kw.stack(),
+            baseline_values,
+        ]
+    ).dropna()
+
+    vmin = all_values.min()
+    vmax = all_values.max()
+
+    norm = plt.Normalize(
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    cmap = plt.get_cmap("YlGnBu")
 
     sns.heatmap(
         _pivot_kw,
         ax=ax_kw_hm,
-        cmap="YlGnBu",
+        cmap=cmap,
+        norm=norm,
         annot=True,
         fmt=".3f",
-        annot_kws={"size": 8},
+        annot_kws={"size": 6},
         linewidths=0.4,
         linecolor="white",
-        cbar_kws={"label": "Mean Kendall's $W$"},
+        cbar_kws={},
     )
+    cbar = ax_kw_hm.collections[0].colorbar
+    cbar.set_label("Mean Kendall's $W$", fontsize=7)
+    cbar.ax.tick_params(labelsize=7)
 
-    baseline_rows = ["Full Forest", "Top OOB MCC", "Top OOB ACC", "Random", "Single DT"]
-    ncols = _pivot_kw.shape[1]
-    mesh = ax_kw_hm.collections[0]
-    cmap = mesh.cmap
-    norm = mesh.norm
-    for row_name in baseline_rows:
-        if row_name not in _pivot_kw.index:
-            continue
-        y = _pivot_kw.index.get_loc(row_name)
-        val = _pivot_kw.loc[row_name].iloc[0]
+    n_strategy_cols = len(_pivot_kw.columns)
+    n_baseline_cols = len(baseline_values)
+    n_rows = len(_pivot_kw.index)
+
+    for i, (baseline_name, baseline_value) in enumerate(
+        baseline_values.items()
+    ):
+        x = n_strategy_cols + i
+
+        cell_color = cmap(norm(baseline_value))
+
         rect = plt.Rectangle(
-            (0, y),
-            ncols,
+            (x, 0),
             1,
-            facecolor=cmap(norm(val)),
-            edgecolor="white",
-            linewidth=0.4,
-            zorder=3,
+            n_rows,
+            facecolor=cell_color,
+            edgecolor="none",
+            linewidth=0,
+            zorder=2,
         )
+
         ax_kw_hm.add_patch(rect)
-        r, g, b, _ = cmap(norm(val))
-        text_color = "white" if (0.299 * r + 0.587 * g + 0.114 * b) < 0.5 else "black"
+
+        r, g, b, _ = cell_color
+
+        luminance = (
+            0.2126 * r
+            + 0.7152 * g
+            + 0.0722 * b
+        )
+
+        text_color = (
+            "white"
+            if luminance < 0.5
+            else "black"
+        )
+
         ax_kw_hm.text(
-            ncols / 2,
-            y + 0.5,
-            f"{val:.3f}",
+            x + 0.5,
+            n_rows / 2,
+            f"{baseline_value:.3f}",
             ha="center",
             va="center",
-            fontsize=8,
+            fontsize=6,
             color=text_color,
-            zorder=4,
+            zorder=3,
         )
 
-    ax_kw_hm.set_title(
-        "Representation × Selection Strategy — Feature Importance Stability"
+    ax_kw_hm.set_xlim(
+        0,
+        n_strategy_cols + n_baseline_cols,
     )
-    ax_kw_hm.set_xlabel("Selection Strategy")
-    ax_kw_hm.set_ylabel("Representation")
-    ax_kw_hm.tick_params(axis="x", rotation=40)
-    ax_kw_hm.tick_params(axis="y", rotation=0)
+
+    ax_kw_hm.set_xticks(
+        [
+            *[
+                i + 0.5
+                for i in range(n_strategy_cols)
+            ],
+            *[
+                n_strategy_cols + i + 0.5
+                for i in range(n_baseline_cols)
+            ],
+        ]
+    )
+
+    ax_kw_hm.set_xticklabels(
+        [
+            *_pivot_kw.columns.tolist(),
+            *baseline_values.index.tolist(),
+        ]
+    )
+
+    ax_kw_hm.axvline(
+        n_strategy_cols,
+        color="black",
+        linewidth=1.5,
+        zorder=10,
+    )
+
+    ax_kw_hm.set_title(
+        "Representation × Selection Strategy — "
+        "Feature Importance Stability"
+    )
+
+    ax_kw_hm.set_ylabel("Representation", fontsize=10)
+    ax_kw_hm.set_xlabel("")
+
+    ax_kw_hm.tick_params(
+        axis="x",
+        rotation=35,
+        labelsize=7,
+    )
+
+    ax_kw_hm.tick_params(
+        axis="y",
+        rotation=0,
+        labelsize=7,
+    )
+
+    n_total_cols = (
+        n_strategy_cols + n_baseline_cols
+    )
+
+    strategy_center = (
+        n_strategy_cols / 2
+    ) / n_total_cols
+
+    baseline_center = (
+        n_strategy_cols
+        + n_baseline_cols / 2
+    ) / n_total_cols
+
+    ax_kw_hm.text(
+        strategy_center,
+        -0.5,
+        "Selection Strategies",
+        transform=ax_kw_hm.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
+
+    ax_kw_hm.text(
+        baseline_center,
+        -0.5,
+        "Baselines",
+        transform=ax_kw_hm.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
 
     plt.tight_layout()
+
     plt.savefig(
         f"{output_dir}/heatmap_kendall_configurations.png",
         dpi=600,
+        bbox_inches="tight",
     )
 
-    print("Subforest Selection: Kendall's W vs Configuration - done.")
+    print(
+        "Subforest Selection: Kendall's W vs Configuration - done."
+    )
     print()
 
 
