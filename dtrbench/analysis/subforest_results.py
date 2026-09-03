@@ -124,10 +124,46 @@ def plot_rf_compression(
         SEL_STRATEGIES (list[str]): List of selection strategies to be considered.
     """
 
-    def _plot_line_plot(df, aggregate_values):
-        sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
-        palette = sns.color_palette("colorblind")
+    sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
 
+    # Dynamic colorblind-friendly palette
+    colorblind_palette = sns.color_palette("colorblind")
+
+    def _get_dynamic_colors(n):
+        """Return n distinct colors from a colorblind-friendly palette."""
+        if n <= len(colorblind_palette):
+            return colorblind_palette[:n]
+
+        colors = list(colorblind_palette)
+        cmap = plt.get_cmap("viridis")
+        extra_n = n - len(colors)
+
+        if extra_n == 1:
+            extra_positions = [0.5]
+        else:
+            extra_positions = np.linspace(0.1, 0.9, extra_n)
+
+        colors.extend(cmap(x) for x in extra_positions)
+
+        return colors
+
+    # Assign colors once so that the same series has the same color across all plots
+    all_series = (
+        list(REP_NAMES)
+        + list(SEL_STRATEGIES)
+        + [
+            "Representation-based Methods",
+            "Random",
+            "Top OOB ACC",
+            "Top OOB MCC",
+        ]
+    )
+    all_series = list(dict.fromkeys(all_series))
+
+    colors = _get_dynamic_colors(len(all_series))
+    series_colors = dict(zip(all_series, colors))
+
+    def _plot_line_plot(df, aggregate_values):
         _strat_rename = {
             "agglomerative-performance": "agp",
             "agglomerative": "ag",
@@ -149,8 +185,7 @@ def plot_rf_compression(
                 .reset_index()
             }
         elif aggregate_values == "Representation":
-            # average over representations -> one line per selection strategy
-            # rep_lines = {strategy: d.groupby("Subforest Size")["MCC"].mean().reset_index() for strategy, d in df["rep"].groupby("Selection Strategy")}
+            # average over representations -> one line per representation
             rep_lines = {}
             for rep in REP_NAMES:
                 d = df["rep"][df["rep"]["Representation"] == rep]
@@ -159,8 +194,7 @@ def plot_rf_compression(
                         d.groupby("Subforest Size")["MCC"].mean().reset_index()
                     )
         elif aggregate_values == "Selection Strategy":
-            # average over selection strategies -> one line per representation
-            # rep_lines = {rep: d.groupby("Subforest Size")["MCC"].mean().reset_index() for rep, d in df["rep"].groupby("Representation")}
+            # average over selection strategies -> one line per selection strategy
             rep_lines = {}
             for strategy in SEL_STRATEGIES:
                 d = df["rep"][df["rep"]["Selection Strategy"] == strategy]
@@ -181,10 +215,16 @@ def plot_rf_compression(
                 rep_lines[f"{rep} ({strategy_label})"] = (
                     best.groupby("Subforest Size")["MCC"].mean().reset_index()
                 )
+        else:
+            raise ValueError(f"Unknown aggregation mode: {aggregate_values}")
+
         _bl_lines = {}
         for _rep in ["Random", "Top OOB ACC", "Top OOB MCC"]:
             _sub = df["bl"][df["bl"]["Representation"] == _rep]
-            _bl_lines[_rep] = _sub.groupby("Subforest Size")["MCC"].mean().reset_index()
+            if not _sub.empty:
+                _bl_lines[_rep] = (
+                    _sub.groupby("Subforest Size")["MCC"].mean().reset_index()
+                )
 
         # Full forest & Single DT: single horizontal value
         _ff_mcc = df["ff"]["MCC"].mean()
@@ -196,38 +236,44 @@ def plot_rf_compression(
             ff_label = f"Full Forest (MCC = {_ff_mcc:.3f})"
             dt_label = f"Single DT (MCC = {_dt_mcc:.3f})"
 
-        # CI for representations (±1 SE across datasets × reps × strategies per k)
-        # _rep_ci = df['rep'].groupby('Subforest Size')['MCC'].sem().reset_index().rename(columns={'MCC': 'SE'})
-        # _rep_line = _rep_line.merge(_rep_ci, on='Subforest Size')
+        # Get color for a series
+        def _get_series_color(label):
+            if label in series_colors:
+                return series_colors[label]
+
+            # Configuration labels use the representation color
+            if " (" in label:
+                representation = label.split(" (", 1)[0]
+                if representation in series_colors:
+                    return series_colors[representation]
+
+            # Fallback for unexpected series
+            new_color = _get_dynamic_colors(len(series_colors) + 1)[-1]
+            series_colors[label] = new_color
+            return new_color
 
         fig_compression, ax_c = plt.subplots(figsize=(7, 4.5))
 
-        _series_colors = {
-            "Representations (avg)": palette[0],
-            "Single DT": "black",
-            "Top OOB ACC": palette[2],
-            "Top OOB MCC": palette[3],
-            "Random": palette[4],
-            "Full Forest": "black",
-        }
-
         # Advanced — shaded CI band
-        # ax_c.fill_between(_rep_line['Subforest Size'],
-        #                  _rep_line['MCC'] - _rep_line['SE'],
-        #                  _rep_line['MCC'] + _rep_line['SE'],
-        #                  color=_series_colors['Representations (avg)'], alpha=0.18)
-        for i, (label, line) in enumerate(rep_lines.items()):
+        # _rep_ci = df['rep'].groupby('Subforest Size')['MCC'].sem().reset_index().rename(columns={'MCC': 'SE'})
+        # _rep_line = _rep_line.merge(_rep_ci, on='Subforest Size')
+
+        for label, line in rep_lines.items():
             ax_c.plot(
                 line["Subforest Size"],
                 line["MCC"],
                 marker="o",
                 linewidth=2,
-                color=palette[i],
+                color=_get_series_color(label),
                 label=label,
             )
+
         # Baselines
         _bl_styles = {"Random": "--", "Top OOB ACC": "-.", "Top OOB MCC": ":"}
         for _rep, _ls in _bl_styles.items():
+            if _rep not in _bl_lines:
+                continue
+
             _d = _bl_lines[_rep]
             ax_c.plot(
                 _d["Subforest Size"],
@@ -235,21 +281,21 @@ def plot_rf_compression(
                 linestyle=_ls,
                 marker="s",
                 linewidth=1.7,
-                color=_series_colors[_rep],
+                color=_get_series_color(_rep),
                 label=_rep,
             )
 
         # Full forest & Single DT horizontal lines
         ax_c.axhline(
             _ff_mcc,
-            color=_series_colors["Full Forest"],
+            color="black",
             linewidth=1.4,
             linestyle="--",
             label=ff_label,
         )
         ax_c.axhline(
             _dt_mcc,
-            color=_series_colors["Single DT"],
+            color="black",
             linewidth=1.4,
             linestyle=":",
             label=dt_label,
@@ -265,19 +311,26 @@ def plot_rf_compression(
         ax_c.legend(fontsize=9.5, frameon=True, loc="lower right")
         ax_c.set_title("RF Compression: MCC vs Subforest Size")
         sns.despine(ax=ax_c, top=True, right=True)
+
         suffix = "_recovery" if show_recovery else ""
         plt.tight_layout()
         plt.savefig(
-            f"{output_dir}/fig_compression_{aggregate_values}{suffix}.png", dpi=600
+            f"{output_dir}/fig_compression_{aggregate_values}{suffix}.png",
+            dpi=600,
+            bbox_inches="tight",
         )
+        plt.close(fig_compression)
 
     shared_values["bl"] = _average_random_baseline(shared_values["bl"])
+
     if show_recovery:
         shared_values = _normalize_to_full_forest(shared_values, "MCC")
+
     _plot_line_plot(shared_values, aggregate_values="both")
     _plot_line_plot(shared_values, aggregate_values="Selection Strategy")
     _plot_line_plot(shared_values, aggregate_values="Representation")
     _plot_line_plot(shared_values, aggregate_values="Configuration")
+
     print("Subforest Selection: Random Forest Compression - done.")
     print()
 
