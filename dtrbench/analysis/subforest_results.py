@@ -15,6 +15,7 @@ import pandas as pd
 import seaborn as sns
 from copy import deepcopy
 from matplotlib.patches import Patch
+from matplotlib.colors import PowerNorm
 from scipy.stats import spearmanr, wilcoxon
 
 
@@ -644,12 +645,13 @@ def plot_mcc_representation_selection_strategy(
     vmin = all_values.min()
     vmax = all_values.max()
 
-    norm = plt.Normalize(
+    norm = PowerNorm(
+        gamma=1.5,
         vmin=vmin,
         vmax=vmax,
     )
 
-    cmap = plt.get_cmap("YlGnBu")
+    cmap = plt.get_cmap("viridis")
 
     sns.heatmap(
         _pivot_mcc,
@@ -1717,7 +1719,7 @@ def plot_kendalls_w_vs_config(
         vmax=vmax,
     )
 
-    cmap = plt.get_cmap("YlGnBu")
+    cmap = plt.get_cmap("viridis")
 
     sns.heatmap(
         _pivot_kw,
